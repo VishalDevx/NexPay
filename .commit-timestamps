@@ -33,3 +33,4 @@
 # 2026-05-22T20:45:11.658152 - chore: update docker compose versions
 # 2026-05-22T14:59:55.658152 - chore: pin dependency versions
 # 2026-05-20T04:52:59.658152 - chore: add type definitions
+# 2026-05-18T18:38:23.658152 - chore: add node engine constraint
