@@ -326,6 +326,20 @@ authRouter.post("/mfa/sms/setup", async (req: Request, res: Response) => {
   }
 });
 
+authRouter.get("/me", async (req: Request, res: Response) => {
+// @ts-ignore - same as /profile below
+  const merchant = await prisma.merchant.findUnique({
+    where: { id: req.merchant!.id },
+    select: {
+      id: true, name: true, email: true, country: true, businessType: true,
+      kycStatus: true, status: true, totpEnabled: true, smsMfaEnabled: true,
+      smsMfaPhone: true, recoveryEmail: true, emailVerified: true, baseCurrency: true,
+      createdAt: true,
+    },
+  });
+  res.json({ merchant });
+});
+
 authRouter.get("/profile", async (req: Request, res: Response) => {
   const merchant = await prisma.merchant.findUnique({
     where: { id: req.merchant!.id },

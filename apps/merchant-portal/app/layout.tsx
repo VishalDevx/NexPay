@@ -1,5 +1,6 @@
 import "./globals.css";
 import { Metadata } from "next";
+import Providers from "./providers";
 
 export const metadata: Metadata = {
   title: "NexPay | Payment Infrastructure for the Internet",
@@ -32,7 +33,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="bg-slate-900 text-gray-100 min-h-screen antialiased">{children}</body>
+      <body className="bg-slate-900 text-gray-100 min-h-screen antialiased">
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useState } from "react";
+import { usePathname } from "next/navigation";
 import Link from "next/link";
+import { useAuth } from "@/lib/auth-context";
 import {
   LayoutDashboard,
   CreditCard,
@@ -16,7 +17,6 @@ import {
   Users,
   Beaker,
   BookOpen,
-  Building2,
   BarChart3,
   Sliders,
 } from "lucide-react";
@@ -40,24 +40,16 @@ const navItems = [
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [merchant, setMerchant] = useState<any>(null);
-  const router = useRouter();
+  const { merchant, loading, signOut } = useAuth();
   const pathname = usePathname();
 
-  useEffect(() => {
-    const token = localStorage.getItem("nexpay_token");
-    const merchantData = localStorage.getItem("nexpay_merchant");
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-    setMerchant(merchantData ? JSON.parse(merchantData) : null);
-  }, [router]);
-
-  const handleSignOut = () => {
-    localStorage.clear();
-    router.push("/login");
-  };
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -132,7 +124,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             variant="ghost"
             size="sm"
             className="w-full justify-start text-gray-500 hover:text-red-600"
-            onClick={handleSignOut}
+            onClick={signOut}
           >
             <LogOut size={16} className="mr-2" />
             {!collapsed && "Sign Out"}
