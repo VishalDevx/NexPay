@@ -17,6 +17,8 @@ import {
   Beaker,
   BookOpen,
   Building2,
+  BarChart3,
+  Sliders,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -24,12 +26,15 @@ import { Button } from "@/components/ui/button";
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/transactions", label: "Transactions", icon: CreditCard },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/payment-methods", label: "Payments", icon: CreditCard },
   { href: "/payouts", label: "Payouts", icon: Wallet },
   { href: "/disputes", label: "Disputes", icon: Shield },
   { href: "/sandbox", label: "Sandbox", icon: Beaker },
   { href: "/reconciliation", label: "Ledger", icon: BookOpen },
   { href: "/developers", label: "Developers", icon: Settings },
-  { href: "/onboarding", label: "Onboarding", icon: Building2 },
+  { href: "/team", label: "Team", icon: Users },
+  { href: "/settings", label: "Settings", icon: Sliders },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
