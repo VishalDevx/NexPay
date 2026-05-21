@@ -5,31 +5,107 @@ import jwt from "jsonwebtoken";
 import { env } from "../../config/env";
 import { webhookService } from "../webhooks/webhook.service";
 import { authMiddleware } from "../../middleware/auth";
+import crypto from "crypto";
 
 const router = Router();
 const authRouter = Router();
 authRouter.use(authMiddleware);
 
+function generateToken(merchantId: string): string {
+  return jwt.sign({ merchantId }, env.JWT_SECRET, { expiresIn: "7d" });
+}
+
+// --- Registration ---
 router.post("/auth/register", async (req: Request, res: Response) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, country, businessType } = req.body;
 
     const existing = await prisma.merchant.findUnique({ where: { email } });
     if (existing) return res.status(409).json({ error: "email_exists" });
 
     const passwordHash = await bcrypt.hash(password, 12);
     const merchant = await prisma.merchant.create({
-      data: { name, email, passwordHash },
+      data: {
+        name,
+        email,
+        passwordHash,
+        country: country || null,
+        businessType: businessType || null,
+        status: "PENDING",
+      },
     });
 
-    const token = jwt.sign({ merchantId: merchant.id }, env.JWT_SECRET, { expiresIn: "7d" });
+    const token = generateToken(merchant.id);
 
-    res.status(201).json({ merchant: { id: merchant.id, name: merchant.name, email }, token });
+    res.status(201).json({
+      merchant: { id: merchant.id, name: merchant.name, email, country, businessType },
+      token,
+    });
   } catch (err: any) {
     res.status(422).json({ error: "registration_failed", message: err.message });
   }
 });
 
+// --- Email OTP send ---
+router.post("/auth/send-otp", async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    const merchant = await prisma.merchant.findUnique({ where: { email } });
+    if (!merchant) return res.status(404).json({ error: "merchant_not_found" });
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
+
+    await prisma.merchant.update({
+      where: { id: merchant.id },
+      data: {
+        passwordResetToken: otpHash,
+        passwordResetExpires: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+
+    console.log(`[OTP] ${email}: ${otp}`);
+
+    res.json({ status: "otp_sent", message: "OTP sent to email" });
+  } catch (err: any) {
+    res.status(500).json({ error: "otp_failed", message: err.message });
+  }
+});
+
+// --- Verify email OTP ---
+router.post("/auth/verify-otp", async (req: Request, res: Response) => {
+  try {
+    const { email, otp } = req.body;
+    const merchant = await prisma.merchant.findUnique({ where: { email } });
+    if (!merchant) return res.status(404).json({ error: "merchant_not_found" });
+
+    const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
+
+    if (
+      !merchant.passwordResetToken ||
+      merchant.passwordResetToken !== otpHash ||
+      !merchant.passwordResetExpires ||
+      merchant.passwordResetExpires < new Date()
+    ) {
+      return res.status(400).json({ error: "invalid_or_expired_otp" });
+    }
+
+    await prisma.merchant.update({
+      where: { id: merchant.id },
+      data: {
+        emailVerified: true,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+      },
+    });
+
+    res.json({ status: "verified" });
+  } catch (err: any) {
+    res.status(500).json({ error: "verification_failed", message: err.message });
+  }
+});
+
+// --- Login ---
 router.post("/auth/login", async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
@@ -40,24 +116,235 @@ router.post("/auth/login", async (req: Request, res: Response) => {
     const valid = await bcrypt.compare(password, merchant.passwordHash);
     if (!valid) return res.status(401).json({ error: "invalid_credentials" });
 
-    const token = jwt.sign({ merchantId: merchant.id }, env.JWT_SECRET, { expiresIn: "7d" });
+    const token = generateToken(merchant.id);
 
-    res.json({ merchant: { id: merchant.id, name: merchant.name, email }, token });
+    res.json({
+      merchant: {
+        id: merchant.id,
+        name: merchant.name,
+        email,
+        country: merchant.country,
+        businessType: merchant.businessType,
+        kycStatus: merchant.kycStatus,
+        status: merchant.status,
+        totpEnabled: merchant.totpEnabled,
+        smsMfaEnabled: merchant.smsMfaEnabled,
+      },
+      token,
+      mfaRequired: merchant.totpEnabled || merchant.smsMfaEnabled,
+    });
   } catch (err: any) {
     res.status(500).json({ error: "server_error", message: err.message });
   }
 });
 
+// --- Verify TOTP (MFA second step) ---
+router.post("/auth/verify-totp", async (req: Request, res: Response) => {
+  try {
+    const { email, token: totpToken } = req.body;
+    const merchant = await prisma.merchant.findUnique({ where: { email } });
+    if (!merchant || !merchant.totpSecret) {
+      return res.status(401).json({ error: "mfa_not_configured" });
+    }
+
+    const { authenticator } = require("otplib");
+    const isValid = authenticator.verify({ token: totpToken, secret: merchant.totpSecret });
+
+    if (!isValid) return res.status(401).json({ error: "invalid_totp" });
+
+    const jwtToken = generateToken(merchant.id);
+    res.json({ token: jwtToken, merchant: { id: merchant.id, name: merchant.name, email: merchant.email } });
+  } catch (err: any) {
+    res.status(500).json({ error: "totp_verification_failed", message: err.message });
+  }
+});
+
+// --- Setup TOTP ---
+authRouter.post("/mfa/totp/setup", async (req: Request, res: Response) => {
+  try {
+    const { authenticator } = require("otplib");
+    const secret = authenticator.generateSecret();
+    const uri = authenticator.keyuri(req.merchant!.email, "NexPay", secret);
+
+    const backupCodes = Array.from({ length: 8 }, () =>
+      crypto.randomBytes(4).toString("hex")
+    );
+
+    await prisma.merchant.update({
+      where: { id: req.merchant!.id },
+      data: {
+        totpSecret: secret,
+        backupCodes: backupCodes,
+      },
+    });
+
+    res.json({ secret, uri, backupCodes });
+  } catch (err: any) {
+    res.status(500).json({ error: "totp_setup_failed", message: err.message });
+  }
+});
+
+// --- Enable TOTP ---
+authRouter.post("/mfa/totp/enable", async (req: Request, res: Response) => {
+  try {
+    const { token } = req.body;
+    const merchant = await prisma.merchant.findUnique({ where: { id: req.merchant!.id } });
+
+    if (!merchant?.totpSecret) return res.status(400).json({ error: "totp_not_setup" });
+
+    const { authenticator } = require("otplib");
+    const isValid = authenticator.verify({ token, secret: merchant.totpSecret });
+
+    if (!isValid) return res.status(400).json({ error: "invalid_token" });
+
+    await prisma.merchant.update({
+      where: { id: req.merchant!.id },
+      data: { totpEnabled: true },
+    });
+
+    res.json({ status: "totp_enabled" });
+  } catch (err: any) {
+    res.status(500).json({ error: "enable_failed", message: err.message });
+  }
+});
+
+// --- Disable TOTP ---
+authRouter.post("/mfa/totp/disable", async (req: Request, res: Response) => {
+  try {
+    await prisma.merchant.update({
+      where: { id: req.merchant!.id },
+      data: { totpSecret: null, totpEnabled: false, backupCodes: null },
+    });
+    res.json({ status: "totp_disabled" });
+  } catch (err: any) {
+    res.status(500).json({ error: "disable_failed", message: err.message });
+  }
+});
+
+// --- Verify backup code ---
+router.post("/auth/verify-backup-code", async (req: Request, res: Response) => {
+  try {
+    const { email, code } = req.body;
+    const merchant = await prisma.merchant.findUnique({ where: { email } });
+    if (!merchant || !merchant.backupCodes) return res.status(401).json({ error: "invalid" });
+
+    const codes = merchant.backupCodes as string[];
+    const idx = codes.indexOf(code);
+    if (idx === -1) return res.status(401).json({ error: "invalid_backup_code" });
+
+    codes.splice(idx, 1);
+    await prisma.merchant.update({
+      where: { id: merchant.id },
+      data: { backupCodes: codes },
+    });
+
+    const token = generateToken(merchant.id);
+    res.json({ token, merchant: { id: merchant.id, name: merchant.name, email: merchant.email } });
+  } catch (err: any) {
+    res.status(500).json({ error: "backup_code_failed", message: err.message });
+  }
+});
+
+// --- Password reset request ---
+router.post("/auth/password-reset-request", async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    const merchant = await prisma.merchant.findUnique({ where: { email } });
+    if (!merchant) return res.json({ status: "ok" });
+
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetHash = crypto.createHash("sha256").update(resetToken).digest("hex");
+
+    await prisma.merchant.update({
+      where: { id: merchant.id },
+      data: {
+        passwordResetToken: resetHash,
+        passwordResetExpires: new Date(Date.now() + 15 * 60 * 1000),
+      },
+    });
+
+    console.log(`[Password Reset] ${email}: ${resetToken}`);
+
+    res.json({ status: "ok" });
+  } catch (err: any) {
+    res.status(500).json({ error: "reset_failed", message: err.message });
+  }
+});
+
+// --- Password reset confirm ---
+router.post("/auth/password-reset-confirm", async (req: Request, res: Response) => {
+  try {
+    const { email, token, password } = req.body;
+
+    const merchant = await prisma.merchant.findUnique({ where: { email } });
+    if (!merchant) return res.status(400).json({ error: "invalid_request" });
+
+    const resetHash = crypto.createHash("sha256").update(token).digest("hex");
+
+    if (
+      !merchant.passwordResetToken ||
+      merchant.passwordResetToken !== resetHash ||
+      !merchant.passwordResetExpires ||
+      merchant.passwordResetExpires < new Date()
+    ) {
+      return res.status(400).json({ error: "invalid_or_expired_token" });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    await prisma.merchant.update({
+      where: { id: merchant.id },
+      data: {
+        passwordHash,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+      },
+    });
+
+    await prisma.apiKey.updateMany({
+      where: { merchantId: merchant.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+
+    res.json({ status: "password_reset_complete" });
+  } catch (err: any) {
+    res.status(500).json({ error: "reset_failed", message: err.message });
+  }
+});
+
+// --- SMS MFA setup (simulated) ---
+authRouter.post("/mfa/sms/setup", async (req: Request, res: Response) => {
+  try {
+    const { phone } = req.body;
+    await prisma.merchant.update({
+      where: { id: req.merchant!.id },
+      data: { smsMfaPhone: phone, smsMfaEnabled: true },
+    });
+    res.json({ status: "sms_mfa_setup", phone });
+  } catch (err: any) {
+    res.status(500).json({ error: "sms_setup_failed", message: err.message });
+  }
+});
+
 authRouter.get("/profile", async (req: Request, res: Response) => {
-  res.json(req.merchant);
+  const merchant = await prisma.merchant.findUnique({
+    where: { id: req.merchant!.id },
+    select: {
+      id: true, name: true, email: true, country: true, businessType: true,
+      kycStatus: true, status: true, totpEnabled: true, smsMfaEnabled: true,
+      smsMfaPhone: true, recoveryEmail: true, emailVerified: true, baseCurrency: true,
+      createdAt: true,
+    },
+  });
+  res.json(merchant);
 });
 
 authRouter.post("/api-keys", async (req: Request, res: Response) => {
   try {
     const { env: keyEnv } = req.body;
     const prefix = `nex_${keyEnv === "TEST" ? "test" : "live"}_`;
-    const rawKey = prefix + require("crypto").randomBytes(24).toString("hex");
-    const keyHash = require("crypto").createHash("sha256").update(rawKey).digest("hex");
+    const rawKey = prefix + crypto.randomBytes(24).toString("hex");
+    const keyHash = crypto.createHash("sha256").update(rawKey).digest("hex");
 
     const apiKey = await prisma.apiKey.create({
       data: {
@@ -78,7 +365,7 @@ authRouter.post("/api-keys", async (req: Request, res: Response) => {
 authRouter.get("/api-keys", async (req: Request, res: Response) => {
   const keys = await prisma.apiKey.findMany({
     where: { merchantId: req.merchant!.id },
-    select: { id: true, prefix: true, env: true, createdAt: true, revokedAt: true },
+    select: { id: true, prefix: true, env: true, createdAt: true, revokedAt: true, scopes: true },
   });
   res.json({ data: keys });
 });
@@ -95,7 +382,7 @@ authRouter.post("/webhooks", async (req: Request, res: Response) => {
   try {
     const { url, events } = req.body;
     const secret = webhookService.generateSecret();
-    const secretHash = require("crypto").createHash("sha256").update(secret).digest("hex");
+    const secretHash = crypto.createHash("sha256").update(secret).digest("hex");
 
     const endpoint = await prisma.webhookEndpoint.create({
       data: {
@@ -146,12 +433,12 @@ authRouter.post("/webhooks/deliveries/:id/replay", async (req: Request, res: Res
 
   if (!delivery) return res.status(404).json({ error: "not_found" });
 
-  const { webhookQueue } = require("../webhooks/webhook.service");
-
   await prisma.webhookDelivery.update({
     where: { id: delivery.id },
     data: { status: "PENDING", attempts: 0, nextRetryAt: new Date() },
   });
+
+  const { webhookQueue } = await import("../webhooks/webhook.service");
 
   await webhookQueue.add(
     `webhook:replay:${delivery.id}`,
