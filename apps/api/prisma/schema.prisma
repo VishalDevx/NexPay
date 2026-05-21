@@ -85,17 +85,28 @@ enum WebhookStatus {
 }
 
 model Merchant {
-  id            String         @id @default(uuid()) @db.Uuid
-  name          String
-  email         String         @unique
-  passwordHash  String
-  status        MerchantStatus @default(PENDING)
-  baseCurrency  String         @default("INR")
-  kycStatus     KYCStatus      @default(NOT_SUBMITTED)
-  kycDocuments  Json?
-  webhookSecret String?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id                   String         @id @default(uuid()) @db.Uuid
+  name                 String
+  email                String         @unique
+  passwordHash         String
+  status               MerchantStatus @default(PENDING)
+  baseCurrency         String         @default("INR")
+  country              String?
+  businessType         String?
+  kycStatus            KYCStatus      @default(NOT_SUBMITTED)
+  kycDocuments         Json?
+  webhookSecret        String?
+  emailVerified        Boolean        @default(false)
+  totpSecret           String?
+  totpEnabled          Boolean        @default(false)
+  smsMfaEnabled        Boolean        @default(false)
+  smsMfaPhone          String?
+  backupCodes          Json?
+  recoveryEmail        String?
+  passwordResetToken   String?
+  passwordResetExpires DateTime?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 
   apiKeys     ApiKey[]
   payments    Payment[]
