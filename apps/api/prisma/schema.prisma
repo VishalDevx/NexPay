@@ -121,6 +121,12 @@ enum AccountType {
   EQUITY
 }
 
+enum JournalStatus {
+  DRAFT
+  POSTED
+  REVERSED
+}
+
 enum EntryType {
   DEBIT
   CREDIT
@@ -303,6 +309,7 @@ model Payment {
   payoutItems   PayoutItem[]
   refunds       Refund[]
   splitTransactions SplitTransaction[]
+  settlementBatchItems SettlementBatchItem[]
 
   @@index([merchantId])
   @@index([idempotencyKey])
@@ -867,14 +874,107 @@ model ReconciliationRun {
   status          String   @default("RUNNING")
   startedAt       DateTime @default(now())
   completedAt     DateTime?
-  totalWallets    Int      @default(0)
+  totalSource     Int      @default(0)
+  totalTarget     Int      @default(0)
   matchedCount    Int      @default(0)
   driftedCount    Int      @default(0)
+  missingCount    Int      @default(0)
+  duplicateCount  Int      @default(0)
+  orphanCount     Int      @default(0)
   autoCorrected   Int      @default(0)
   errors          Json?
   summary         Json?
 
+  matches ReconciliationMatch[]
+
   @@map("reconciliation_runs")
+}
+
+model ReconciliationRule {
+  id              String   @id @default(uuid()) @db.Uuid
+  name            String   @unique
+  description     String?
+  matchType       String   @default("EXACT")         // EXACT, TOLERANCE, DATE_WINDOW
+  sourceType      String   @default("PAYMENT")       // PAYMENT, SETTLEMENT, PAYOUT
+  targetType      String   @default("LEDGER")        // LEDGER, SETTLEMENT, BANK
+  amountTolerance Decimal  @default(0.01) @db.Decimal(20, 4)
+  dateWindowHours Int      @default(48)
+  enabled         Boolean  @default(true)
+  priority        Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("reconciliation_rules")
+}
+
+model ReconciliationMatch {
+  id              String   @id @default(uuid()) @db.Uuid
+  runId           String   @db.Uuid
+  matchType       String                         // MATCHED, DRIFTED, MISSING, DUPLICATE, ORPHAN
+  sourceType      String                         // PAYMENT, LEDGER, SETTLEMENT
+  sourceId        String?                        // payment/ledger/settlement ID
+  targetType      String?                        // PAYMENT, LEDGER, SETTLEMENT
+  targetId        String?                        // matched target ID
+  expectedAmount  Decimal  @db.Decimal(20, 4)
+  actualAmount    Decimal? @db.Decimal(20, 4)
+  difference      Decimal  @default(0) @db.Decimal(20, 4)
+  currency        String   @default("USD")
+  description     String?
+  status          String   @default("OPEN")      // OPEN, RESOLVED, ESCALATED, IGNORED
+  resolution      String?
+  resolvedAt      DateTime?
+  resolvedBy      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  run ReconciliationRun @relation(fields: [runId], references: [id])
+
+  @@index([runId])
+  @@index([matchType])
+  @@index([sourceType, sourceId])
+  @@index([status])
+  @@map("reconciliation_matches")
+}
+
+model SettlementBatch {
+  id           String   @id @default(uuid()) @db.Uuid
+  reference    String   @unique
+  description  String?
+  totalAmount  Decimal  @db.Decimal(20, 4)
+  currency     String   @default("USD")
+  itemCount    Int      @default(0)
+  matchedCount Int      @default(0)
+  status       String   @default("PENDING")     // PENDING, RECONCILED, PARTIAL, DISPUTED
+  importedAt   DateTime @default(now())
+  reconciledAt DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  items SettlementBatchItem[]
+
+  @@map("settlement_batches")
+}
+
+model SettlementBatchItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  batchId     String   @db.Uuid
+  paymentId   String?  @db.Uuid
+  amount      Decimal  @db.Decimal(20, 4)
+  currency    String   @default("USD")
+  reference   String?
+  description String?
+  status      String   @default("PENDING")      // PENDING, MATCHED, UNMATCHED, DISPUTED
+  matchedAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  batch   SettlementBatch @relation(fields: [batchId], references: [id])
+  payment Payment?        @relation(fields: [paymentId], references: [id])
+
+  @@index([batchId])
+  @@index([paymentId])
+  @@index([status])
+  @@map("settlement_batch_items")
 }
 
 model DailyBalance {
@@ -1018,4 +1118,84 @@ model LedgerAdjustment {
   updatedAt   DateTime @updatedAt
 
   @@map("ledger_adjustments")
+}
+
+model ChartAccount {
+  code        String       @id
+  name        String
+  type        AccountType
+  category    String
+  currency    String       @default("USD")
+  isActive    Boolean      @default(true)
+  description String?
+  parentCode  String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  parent         ChartAccount?         @relation("AccountHierarchy", fields: [parentCode], references: [code])
+  children       ChartAccount[]        @relation("AccountHierarchy")
+  journalLines   JournalLine[]
+  accountBalances LedgerAccountBalance[]
+
+  @@map("chart_accounts")
+}
+
+model JournalEntry {
+  id               String        @id @default(uuid()) @db.Uuid
+  transactionId    String?
+  transactionType  String?
+  description      String?
+  reference        String?
+  entryDate        DateTime      @default(now())
+  status           JournalStatus @default(POSTED)
+  createdById      String?
+  reversalOfId     String?       @unique @db.Uuid
+  reversalReason   String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  lines       JournalLine[]  @relation("JournalEntryLines")
+  reversalOf  JournalEntry?  @relation("EntryReversal", fields: [reversalOfId], references: [id])
+  reversals   JournalEntry[] @relation("EntryReversal")
+
+  @@index([transactionId])
+  @@index([transactionType])
+  @@index([entryDate])
+  @@index([status])
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id          String   @id @default(uuid()) @db.Uuid
+  entryId     String   @db.Uuid
+  accountCode String
+  debit       Decimal  @default(0) @db.Decimal(20, 4)
+  credit      Decimal  @default(0) @db.Decimal(20, 4)
+  currency    String   @default("USD")
+  description String?
+  createdAt   DateTime @default(now())
+
+  entry   JournalEntry @relation("JournalEntryLines", fields: [entryId], references: [id])
+  account ChartAccount @relation(fields: [accountCode], references: [code])
+
+  @@index([entryId])
+  @@index([accountCode])
+  @@map("journal_lines")
+}
+
+model LedgerAccountBalance {
+  id          String   @id @default(uuid()) @db.Uuid
+  accountCode String
+  currency    String   @default("USD")
+  balance     Decimal  @default(0) @db.Decimal(20, 4)
+  periodStart DateTime @default(now())
+  periodEnd   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  account ChartAccount @relation(fields: [accountCode], references: [code])
+
+  @@unique([accountCode, currency, periodStart, periodEnd])
+  @@index([accountCode, periodEnd])
+  @@map("ledger_account_balances")
 }

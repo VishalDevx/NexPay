@@ -34,6 +34,58 @@ async function main() {
 
   console.log("Seeded merchants:", admin.id, testMerchant.id);
 
+  const chartAccounts = [
+    { code: "1000", name: "Assets", type: "ASSET" as const, category: "ROOT" },
+    { code: "1100", name: "Cash & Bank", type: "ASSET" as const, category: "CURRENT_ASSET", parentCode: "1000" },
+    { code: "1200", name: "Settlement Holding", type: "ASSET" as const, category: "CURRENT_ASSET", parentCode: "1000" },
+    { code: "1300", name: "Reserve Fund", type: "ASSET" as const, category: "CURRENT_ASSET", parentCode: "1000" },
+    { code: "1400", name: "Accounts Receivable", type: "ASSET" as const, category: "CURRENT_ASSET", parentCode: "1000" },
+    { code: "2000", name: "Liabilities", type: "LIABILITY" as const, category: "ROOT" },
+    { code: "2100", name: "Merchant Payable", type: "LIABILITY" as const, category: "CURRENT_LIABILITY", parentCode: "2000" },
+    { code: "2200", name: "Reserve Liability", type: "LIABILITY" as const, category: "CURRENT_LIABILITY", parentCode: "2000" },
+    { code: "2300", name: "Unsettled Funds", type: "LIABILITY" as const, category: "CURRENT_LIABILITY", parentCode: "2000" },
+    { code: "2400", name: "Platform Fee Payable", type: "LIABILITY" as const, category: "CURRENT_LIABILITY", parentCode: "2000" },
+    { code: "3000", name: "Revenue", type: "REVENUE" as const, category: "ROOT" },
+    { code: "3100", name: "Processing Fees", type: "REVENUE" as const, category: "OPERATING_REVENUE", parentCode: "3000" },
+    { code: "3200", name: "Platform Subscription", type: "REVENUE" as const, category: "OPERATING_REVENUE", parentCode: "3000" },
+    { code: "3300", name: "Chargeback Fees", type: "REVENUE" as const, category: "OPERATING_REVENUE", parentCode: "3000" },
+    { code: "3400", name: "International Markup", type: "REVENUE" as const, category: "OPERATING_REVENUE", parentCode: "3000" },
+    { code: "4000", name: "Expenses", type: "EXPENSE" as const, category: "ROOT" },
+    { code: "4100", name: "Gateway Charges", type: "EXPENSE" as const, category: "OPERATING_EXPENSE", parentCode: "4000" },
+    { code: "4200", name: "Bank Charges", type: "EXPENSE" as const, category: "OPERATING_EXPENSE", parentCode: "4000" },
+    { code: "4300", name: "Refund Loss", type: "EXPENSE" as const, category: "OPERATING_EXPENSE", parentCode: "4000" },
+    { code: "4400", name: "Chargeback Loss", type: "EXPENSE" as const, category: "OPERATING_EXPENSE", parentCode: "4000" },
+    { code: "5000", name: "Equity", type: "EQUITY" as const, category: "ROOT" },
+    { code: "5100", name: "Retained Earnings", type: "EQUITY" as const, category: "OWNERS_EQUITY", parentCode: "5000" },
+  ];
+
+  for (const acc of chartAccounts) {
+    await prisma.chartAccount.upsert({
+      where: { code: acc.code },
+      update: { name: acc.name, type: acc.type, category: acc.category, parentCode: acc.parentCode || null },
+      create: acc,
+    });
+  }
+
+  console.log("Seeded chart of accounts");
+
+  const recRules = [
+    { name: "Payment-Ledger Exact Match", matchType: "EXACT", sourceType: "PAYMENT", targetType: "LEDGER", amountTolerance: 0, dateWindowHours: 24, priority: 1 },
+    { name: "Payment-Ledger Tolerance Match", matchType: "TOLERANCE", sourceType: "PAYMENT", targetType: "LEDGER", amountTolerance: 0.01, dateWindowHours: 48, priority: 2 },
+    { name: "Settlement-Settlement Batch Match", matchType: "EXACT", sourceType: "SETTLEMENT", targetType: "SETTLEMENT", amountTolerance: 0, dateWindowHours: 72, priority: 1 },
+    { name: "Payout-Bank Statement Match", matchType: "TOLERANCE", sourceType: "PAYOUT", targetType: "BANK", amountTolerance: 0.01, dateWindowHours: 168, priority: 1 },
+  ];
+
+  for (const rule of recRules) {
+    await prisma.reconciliationRule.upsert({
+      where: { name: rule.name },
+      update: {},
+      create: { ...rule, description: rule.name, enabled: true },
+    });
+  }
+
+  console.log("Seeded reconciliation rules");
+
   const rules = [
     { name: "Velocity Check", condition: { type: "velocity", limit: 5, window: 60 }, action: "REVIEW", scoreWeight: 30 },
     { name: "Geo Anomaly", condition: { type: "geo_anomaly" }, action: "REVIEW", scoreWeight: 25 },

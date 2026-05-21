@@ -42,6 +42,7 @@ import securityRouter from "./modules/security/security.router";
 import marketplaceDeepRouter from "./modules/marketplace/marketplace-deep.router";
 import adminOpsRouter from "./modules/admin/admin-ops.router";
 import incidentsRouter from "./modules/incidents/incidents.router";
+import glRouter from "./modules/general-ledger/gl.router";
 
 import { webhookWorker } from "./workers/webhook.worker";
 import { payoutWorker } from "./workers/payout.worker";
@@ -73,6 +74,7 @@ app.use(authMiddleware);
 app.use(idempotencyMiddleware);
 app.use(sandboxMiddleware);
 
+app.use("/api/v1/gl", glRouter);
 app.use("/api/v1/merchants/lifecycle", merchantLifecycleRouter);
 app.use("/api/v1/support/tickets", supportRouter);
 app.use("/api/v1/support/canned-responses", cannedResponsesRouter);
