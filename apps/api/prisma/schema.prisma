@@ -1,0 +1,385 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MerchantStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum KYCStatus {
+  NOT_SUBMITTED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ApiKeyEnv {
+  LIVE
+  TEST
+}
+
+enum PaymentStatus {
+  INITIATED
+  PROCESSING
+  AUTHORIZED
+  CAPTURED
+  SETTLED
+  FAILED
+  REFUNDED
+  DISPUTED
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  REVENUE
+  EXPENSE
+  EQUITY
+}
+
+enum EntryType {
+  DEBIT
+  CREDIT
+}
+
+enum WalletTxnType {
+  LOAD
+  WITHDRAW
+  TRANSFER_IN
+  TRANSFER_OUT
+  PAYMENT_IN
+  PAYOUT
+  FEE
+  REFUND
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum DisputeStatus {
+  RAISED
+  EVIDENCE_SUBMITTED
+  UNDER_REVIEW
+  RESOLVED_MERCHANT_WON
+  RESOLVED_MERCHANT_LOST
+}
+
+enum WebhookStatus {
+  PENDING
+  DELIVERED
+  FAILED
+  DEAD_LETTER
+}
+
+model Merchant {
+  id            String         @id @default(uuid()) @db.Uuid
+  name          String
+  email         String         @unique
+  passwordHash  String
+  status        MerchantStatus @default(PENDING)
+  baseCurrency  String         @default("INR")
+  kycStatus     KYCStatus      @default(NOT_SUBMITTED)
+  kycDocuments  Json?
+  webhookSecret String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  apiKeys     ApiKey[]
+  payments    Payment[]
+  accounts    Account[]
+  wallets     Wallet[]
+  payouts     Payout[]
+  disputes    Dispute[]
+  webhooks    WebhookEndpoint[]
+  idempotency IdempotencyKey[]
+
+  @@map("merchants")
+}
+
+model ApiKey {
+  id        String     @id @default(uuid()) @db.Uuid
+  merchantId String    @db.Uuid
+  keyHash   String     @unique
+  prefix    String
+  env       ApiKeyEnv  @default(LIVE)
+  scopes    Json       @default("[]")
+  revokedAt DateTime?
+  createdAt DateTime   @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@map("api_keys")
+}
+
+model Payment {
+  id              String        @id @default(uuid()) @db.Uuid
+  merchantId      String        @db.Uuid
+  amount          Decimal       @db.Decimal(20, 4)
+  currency        String        @default("INR")
+  status          PaymentStatus @default(INITIATED)
+  idempotencyKey  String?
+  paymentMethod   Json?
+  metadata        Json?
+  fraudScore      Decimal?      @db.Decimal(5, 2)
+  description     String?
+  capturedAt      DateTime?
+  settledAt       DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  merchant      Merchant        @relation(fields: [merchantId], references: [id])
+  events        PaymentEvent[]
+  ledgerEntries LedgerEntry[]
+  fraudEvents   FraudEvent[]
+  disputes      Dispute[]
+  webhooks      WebhookDelivery[]
+  payoutItems   PayoutItem[]
+
+  @@index([merchantId])
+  @@index([idempotencyKey])
+  @@index([status])
+  @@map("payments")
+}
+
+model PaymentEvent {
+  id          String        @id @default(uuid()) @db.Uuid
+  paymentId   String        @db.Uuid
+  fromStatus  PaymentStatus
+  toStatus    PaymentStatus
+  actor       String
+  reason      String?
+  createdAt   DateTime      @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+  @@map("payment_events")
+}
+
+model Account {
+  id         String      @id @default(uuid()) @db.Uuid
+  merchantId String      @db.Uuid
+  type       AccountType
+  currency   String
+  name       String
+  lastBalance Decimal    @default(0) @db.Decimal(20, 4)
+  createdAt  DateTime    @default(now())
+
+  merchant      Merchant       @relation(fields: [merchantId], references: [id])
+  ledgerEntries LedgerEntry[]
+
+  @@unique([merchantId, type, currency])
+  @@map("accounts")
+}
+
+model LedgerEntry {
+  id           String    @id @default(uuid()) @db.Uuid
+  accountId    String    @db.Uuid
+  paymentId    String?   @db.Uuid
+  type         EntryType
+  amount       Decimal   @db.Decimal(20, 4)
+  currency     String
+  balanceAfter Decimal   @db.Decimal(20, 4)
+  description  String?
+  createdAt    DateTime  @default(now())
+
+  account Account @relation(fields: [accountId], references: [id])
+  payment Payment? @relation(fields: [paymentId], references: [id])
+
+  @@index([accountId])
+  @@index([paymentId])
+  @@index([createdAt])
+  @@map("ledger_entries")
+}
+
+model Wallet {
+  id               String    @id @default(uuid()) @db.Uuid
+  merchantId       String    @db.Uuid
+  currency         String
+  redisBalanceKey  String    @unique
+  lastReconciledAt DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  merchant Merchant    @relation(fields: [merchantId], references: [id])
+  txns     WalletTxn[]
+
+  @@unique([merchantId, currency])
+  @@map("wallets")
+}
+
+model WalletTxn {
+  id        String        @id @default(uuid()) @db.Uuid
+  walletId  String        @db.Uuid
+  type      WalletTxnType
+  amount    Decimal       @db.Decimal(20, 4)
+  refId     String?
+  refType   String?
+  createdAt DateTime      @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id])
+
+  @@index([walletId])
+  @@map("wallet_txns")
+}
+
+model Payout {
+  id           String       @id @default(uuid()) @db.Uuid
+  merchantId   String       @db.Uuid
+  amount       Decimal      @db.Decimal(20, 4)
+  currency     String
+  status       PayoutStatus @default(PENDING)
+  scheduledFor DateTime?
+  bankRef      String?
+  completedAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  merchant Merchant      @relation(fields: [merchantId], references: [id])
+  items    PayoutItem[]
+
+  @@map("payouts")
+}
+
+model PayoutItem {
+  id        String  @id @default(uuid()) @db.Uuid
+  payoutId  String  @db.Uuid
+  paymentId String  @db.Uuid
+  amount    Decimal @db.Decimal(20, 4)
+
+  payout  Payout  @relation(fields: [payoutId], references: [id])
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@map("payout_items")
+}
+
+model FraudRule {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  condition   Json
+  action      String   @default("DECLINE")
+  scoreWeight Decimal  @default(10) @db.Decimal(5, 2)
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  events FraudEvent[]
+
+  @@map("fraud_rules")
+}
+
+model FraudEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  paymentId String   @db.Uuid
+  ruleId    String?  @db.Uuid
+  triggered Boolean
+  score     Decimal  @db.Decimal(5, 2)
+  reason    String?
+  details   Json?
+  createdAt DateTime @default(now())
+
+  payment Payment   @relation(fields: [paymentId], references: [id])
+  rule    FraudRule? @relation(fields: [ruleId], references: [id])
+
+  @@index([paymentId])
+  @@map("fraud_events")
+}
+
+model Dispute {
+  id            String         @id @default(uuid()) @db.Uuid
+  paymentId     String         @db.Uuid
+  merchantId    String         @db.Uuid
+  reason        String
+  status        DisputeStatus  @default(RAISED)
+  amount        Decimal        @db.Decimal(20, 4)
+  evidence      Json?
+  resolvedAt    DateTime?
+  resolution    String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  payment  Payment  @relation(fields: [paymentId], references: [id])
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@index([paymentId])
+  @@map("disputes")
+}
+
+model WebhookEndpoint {
+  id          String   @id @default(uuid()) @db.Uuid
+  merchantId  String   @db.Uuid
+  url         String
+  events      Json     @default("[]")
+  secretHash  String
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  merchant   Merchant            @relation(fields: [merchantId], references: [id])
+  deliveries WebhookDelivery[]
+
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id          String        @id @default(uuid()) @db.Uuid
+  endpointId  String        @db.Uuid
+  paymentId   String        @db.Uuid
+  payload     Json
+  status      WebhookStatus @default(PENDING)
+  attempts    Int           @default(0)
+  maxRetries  Int           @default(5)
+  nextRetryAt DateTime?
+  deliveredAt DateTime?
+  createdAt   DateTime      @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id])
+  payment  Payment         @relation(fields: [paymentId], references: [id])
+
+  @@index([endpointId])
+  @@index([status])
+  @@index([nextRetryAt])
+  @@map("webhook_deliveries")
+}
+
+model IdempotencyKey {
+  id          String   @id @default(uuid()) @db.Uuid
+  merchantId  String   @db.Uuid
+  key         String
+  requestHash String
+  response    Json
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@unique([merchantId, key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+model RateLimit {
+  id        String   @id @default(uuid()) @db.Uuid
+  ip        String
+  endpoint  String
+  count     Int      @default(1)
+  windowStart DateTime @default(now())
+  blockedUntil DateTime?
+
+  @@index([ip, endpoint])
+  @@index([blockedUntil])
+  @@map("rate_limits")
+}

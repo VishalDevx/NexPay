@@ -1,0 +1,91 @@
+version: "3.9"
+
+x-shared: &shared
+  restart: always
+  networks: [nexpay]
+
+networks:
+  nexpay:
+
+services:
+  postgres:
+    <<: *shared
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nexpay
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-nexpay}
+      POSTGRES_DB: nexpay
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexpay"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    <<: *shared
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    <<: *shared
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: postgresql://nexpay:${DB_PASSWORD:-nexpay}@postgres:5432/nexpay?schema=public
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  merchant-portal:
+    <<: *shared
+    build:
+      context: .
+      dockerfile: apps/merchant-portal/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: https://api.nexpay.com
+    depends_on: [api]
+
+  admin-portal:
+    <<: *shared
+    build:
+      context: .
+      dockerfile: apps/admin-portal/Dockerfile
+    ports:
+      - "3002:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: https://api.nexpay.com
+    depends_on: [api]
+
+  nginx:
+    <<: *shared
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on: [api, merchant-portal, admin-portal]
+
+volumes:
+  pgdata:
+  redisdata:
