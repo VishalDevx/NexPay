@@ -8,10 +8,86 @@ datasource db {
 }
 
 enum MerchantStatus {
-  PENDING
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
   ACTIVE
+  REJECTED
   SUSPENDED
+  TERMINATED
   CLOSED
+}
+
+enum RiskCategory {
+  LOW
+  MEDIUM
+  HIGH
+  PROHIBITED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  PENDING_MERCHANT
+  PENDING_INTERNAL
+  RESOLVED
+  CLOSED
+}
+
+enum TicketCategory {
+  PAYMENT_FAILED
+  SETTLEMENT_DELAYED
+  REFUND_ISSUE
+  WEBHOOK_ISSUE
+  KYC_ISSUE
+  DISPUTE_ISSUE
+  ACCOUNT_SUSPENSION
+  GENERAL
+  BILLING
+  TECHNICAL
+}
+
+enum IncidentSeverity {
+  SEV1
+  SEV2
+  SEV3
+}
+
+enum IncidentStatus {
+  DETECTED
+  INVESTIGATING
+  MITIGATING
+  RESOLVED
+  POSTMORTEM
+  CLOSED
+}
+
+enum PlanTier {
+  STARTER
+  GROWTH
+  BUSINESS
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+  TRIALING
+  EXPIRED
+}
+
+enum SplitType {
+  FIXED
+  PERCENTAGE
+  COMMISSION
 }
 
 enum KYCStatus {
@@ -89,12 +165,24 @@ model Merchant {
   name                 String
   email                String         @unique
   passwordHash         String
-  status               MerchantStatus @default(PENDING)
+  status               MerchantStatus @default(DRAFT)
+  riskCategory         RiskCategory?  @default(LOW)
   baseCurrency         String         @default("INR")
   country              String?
   businessType         String?
+  mccCode              String?
+  expectedMonthlyVolume Decimal?      @db.Decimal(20, 4)
+  averageTicketSize    Decimal?       @db.Decimal(20, 4)
+  websiteUrl           String?
+  refundPolicyUrl      String?
+  termsUrl             String?
+  businessDescription  String?
+  incorporationDate    DateTime?
+  taxId                String?
   kycStatus            KYCStatus      @default(NOT_SUBMITTED)
   kycDocuments         Json?
+  kycSubmittedAt       DateTime?
+  kycExpiryAt          DateTime?
   webhookSecret        String?
   emailVerified        Boolean        @default(false)
   totpSecret           String?
@@ -108,25 +196,35 @@ model Merchant {
   payoutSchedule       Json?
   settingsJson         Json?
   brandingJson         Json?
+  riskScore            Decimal?       @default(0) @db.Decimal(5, 2)
+  rejectionReason      String?
+  approvedAt           DateTime?
+  approvedBy           String?
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
 
-  apiKeys     ApiKey[]
-  payments    Payment[]
-  accounts    Account[]
-  wallets     Wallet[]
-  payouts     Payout[]
-  disputes    Dispute[]
-  webhooks    WebhookEndpoint[]
-  idempotency IdempotencyKey[]
-  customers   Customer[]
-  bankAccounts     BankAccount[]
-  invoices         Invoice[]
-  teamMembers      TeamMember[]
-  uploads          Upload[]
-  sessions         MerchantSession[]
+  apiKeys        ApiKey[]
+  payments       Payment[]
+  accounts       Account[]
+  wallets        Wallet[]
+  payouts        Payout[]
+  disputes       Dispute[]
+  webhooks       WebhookEndpoint[]
+  idempotency    IdempotencyKey[]
+  customers      Customer[]
+  bankAccounts   BankAccount[]
+  invoices       Invoice[]
+  teamMembers    TeamMember[]
+  uploads        Upload[]
+  sessions       MerchantSession[]
   notificationPrefs NotificationPreference[]
-  subMerchants     SubMerchant[]
+  subMerchants   SubMerchant[]
+  approvalHistory MerchantApproval[]
+  reserveConfig  ReserveConfig?
+  complianceNotes ComplianceNote[]
+  supportTickets SupportTicket[]
+  subscriptions  Subscription[]
+  feeSchedules   FeeSchedule[]
 
   @@map("merchants")
 }
