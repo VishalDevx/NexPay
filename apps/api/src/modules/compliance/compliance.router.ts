@@ -107,8 +107,8 @@ router.post("/gdpr/erase", async (req: Request, res: Response) => {
         recoveryEmail: null,
         smsMfaPhone: null,
         totpSecret: null,
-        backupCodes: null,
-        kycDocuments: null,
+        backupCodes: undefined,
+        kycDocuments: undefined,
       },
     });
 
