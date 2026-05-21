@@ -80,7 +80,7 @@ router.post("/events", async (req: Request, res: Response) => {
           amount: amount || 5000,
           currency: "INR",
           status: "FAILED",
-          metadata: { sandbox: true, simulated: true, failureReason: "Simulated payout failure" },
+          bankRef: "sandbox-simulated",
         },
       });
 
@@ -114,7 +114,7 @@ router.delete("/reset", async (req: Request, res: Response) => {
     await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
 
     const sandboxPayouts = await prisma.payout.findMany({
-      where: { merchantId, metadata: { path: ["sandbox"], equals: true } },
+      where: { merchantId, bankRef: "sandbox-simulated" },
       select: { id: true },
     });
     const payoutIds = sandboxPayouts.map((p) => p.id);
