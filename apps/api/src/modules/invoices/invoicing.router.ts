@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../../config/db";
 import { redis } from "../../config/redis";
+import { Prisma } from "@prisma/client";
 import crypto from "crypto";
 
 const router = Router();
@@ -120,15 +121,16 @@ router.patch("/:id", async (req: Request, res: Response) => {
 
     const { customerName, customerEmail, customerGstin, lineItems, taxRate, dueDate, notes } = req.body;
 
-    let subtotal = invoice.subtotal;
-    let taxAmount = invoice.taxAmount;
-    let total = invoice.total;
+    let subtotal = new Prisma.Decimal(invoice.subtotal);
+    let taxAmount = new Prisma.Decimal(invoice.taxAmount);
+    let total = new Prisma.Decimal(invoice.total);
 
     if (lineItems && Array.isArray(lineItems)) {
-      subtotal = lineItems.reduce((sum: number, item: any) => sum + Number(item.quantity) * Number(item.unitPrice), 0);
+      const rawSubtotal = lineItems.reduce((sum: number, item: any) => sum + Number(item.quantity) * Number(item.unitPrice), 0);
+      subtotal = new Prisma.Decimal(rawSubtotal);
       const tax = Number(taxRate) || 0;
-      taxAmount = subtotal * (tax / 100);
-      total = subtotal + taxAmount;
+      taxAmount = new Prisma.Decimal(rawSubtotal * (tax / 100));
+      total = subtotal.add(taxAmount);
     }
 
     await prisma.invoice.update({

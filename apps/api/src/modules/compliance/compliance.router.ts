@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../../config/db";
+import { Prisma } from "@prisma/client";
 
 const router = Router();
 
@@ -107,8 +108,8 @@ router.post("/gdpr/erase", async (req: Request, res: Response) => {
         recoveryEmail: null,
         smsMfaPhone: null,
         totpSecret: null,
-        backupCodes: undefined,
-        kycDocuments: undefined,
+        backupCodes: Prisma.JsonNull,
+        kycDocuments: Prisma.JsonNull,
       },
     });
 
