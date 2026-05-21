@@ -302,6 +302,7 @@ model Payment {
   webhooks      WebhookDelivery[]
   payoutItems   PayoutItem[]
   refunds       Refund[]
+  splitTransactions SplitTransaction[]
 
   @@index([merchantId])
   @@index([idempotencyKey])
@@ -414,6 +415,10 @@ model PayoutItem {
   payoutId  String  @db.Uuid
   paymentId String  @db.Uuid
   amount    Decimal @db.Decimal(20, 4)
+  fee       Decimal @default(0) @db.Decimal(20, 4)
+  reserve   Decimal @default(0) @db.Decimal(20, 4)
+  netAmount Decimal @db.Decimal(20, 4)
+  description String?
 
   payout  Payout  @relation(fields: [payoutId], references: [id])
   payment Payment @relation(fields: [paymentId], references: [id])
@@ -618,12 +623,16 @@ model SubMerchant {
   email        String
   commissionPct Decimal @default(0) @db.Decimal(5, 2)
   status       String   @default("ACTIVE")
+  kycStatus    KYCStatus @default(NOT_SUBMITTED)
+  riskCategory RiskCategory? @default(LOW)
+  riskScore    Decimal? @default(0) @db.Decimal(5, 2)
   apiKeyPrefix String?
   gmv          Decimal  @default(0) @db.Decimal(20, 4)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  parent Merchant @relation(fields: [parentId], references: [id])
+  parent           Merchant           @relation(fields: [parentId], references: [id])
+  splitTransactions SplitTransaction[]
 
   @@index([parentId])
   @@map("sub_merchants")
@@ -658,6 +667,329 @@ model IdempotencyKey {
   @@unique([merchantId, key])
   @@index([expiresAt])
   @@map("idempotency_keys")
+}
+
+model MerchantApproval {
+  id          String       @id @default(uuid()) @db.Uuid
+  merchantId  String       @db.Uuid
+  action      String
+  fromStatus  MerchantStatus
+  toStatus    MerchantStatus
+  reviewerId  String?
+  reason      String?
+  notes       String?
+  createdAt   DateTime     @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@index([merchantId])
+  @@map("merchant_approvals")
+}
+
+model ComplianceNote {
+  id         String   @id @default(uuid()) @db.Uuid
+  merchantId String   @db.Uuid
+  authorId   String?
+  content    String
+  category   String   @default("GENERAL")
+  pinned     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@index([merchantId])
+  @@map("compliance_notes")
+}
+
+model ReserveConfig {
+  id                    String   @id @default(uuid()) @db.Uuid
+  merchantId            String   @unique @db.Uuid
+  reservePercentage     Decimal  @default(10) @db.Decimal(5, 2)
+  fixedReserveAmount    Decimal  @default(0) @db.Decimal(20, 4)
+  releaseDelayDays      Int      @default(90)
+  riskBasedIncrease     Boolean  @default(false)
+  manualHold            Boolean  @default(false)
+  manualHoldAmount      Decimal? @db.Decimal(20, 4)
+  manualHoldReason      String?
+  currentReserveBalance Decimal  @default(0) @db.Decimal(20, 4)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+  releases ReserveRelease[]
+
+  @@map("reserve_configs")
+}
+
+model ReserveRelease {
+  id              String   @id @default(uuid()) @db.Uuid
+  configId        String   @db.Uuid
+  amount          Decimal  @db.Decimal(20, 4)
+  status          String   @default("PENDING")
+  scheduledDate   DateTime
+  releasedAt      DateTime?
+  approvedBy      String?
+  createdAt       DateTime @default(now())
+
+  config ReserveConfig @relation(fields: [configId], references: [id])
+
+  @@index([configId])
+  @@map("reserve_releases")
+}
+
+model SupportTicket {
+  id            String         @id @default(uuid()) @db.Uuid
+  merchantId    String         @db.Uuid
+  subject       String
+  category      TicketCategory @default(GENERAL)
+  priority      TicketPriority @default(MEDIUM)
+  status        TicketStatus   @default(OPEN)
+  assignedTo    String?
+  slaDeadline   DateTime?
+  resolvedAt    DateTime?
+  closedAt      DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  merchant Merchant        @relation(fields: [merchantId], references: [id])
+  messages TicketMessage[]
+
+  @@index([merchantId])
+  @@index([status])
+  @@index([priority])
+  @@map("support_tickets")
+}
+
+model TicketMessage {
+  id         String   @id @default(uuid()) @db.Uuid
+  ticketId   String   @db.Uuid
+  authorId   String?
+  authorType String   @default("MERCHANT")
+  content    String
+  attachments Json?
+  isInternal Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id])
+
+  @@index([ticketId])
+  @@map("ticket_messages")
+}
+
+model MerchantPlan {
+  id            String   @id @default(uuid()) @db.Uuid
+  name          String   @unique
+  tier          PlanTier @default(STARTER)
+  description   String?
+  monthlyPrice  Decimal  @db.Decimal(20, 4)
+  transactionFee Decimal @db.Decimal(5, 4)
+  fixedFee      Decimal  @default(0) @db.Decimal(20, 4)
+  internationalMarkup Decimal @default(0) @db.Decimal(5, 4)
+  maxMonthlyVolume Decimal? @db.Decimal(20, 4)
+  maxApiCalls   Int?
+  teamMembers   Int?
+  features      Json     @default("[]")
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  subscriptions Subscription[]
+
+  @@map("merchant_plans")
+}
+
+model Subscription {
+  id            String             @id @default(uuid()) @db.Uuid
+  merchantId    String             @db.Uuid
+  planId        String             @db.Uuid
+  status        SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime       @default(now())
+  currentPeriodEnd   DateTime
+  canceledAt    DateTime?
+  trialEndsAt   DateTime?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  merchant Merchant   @relation(fields: [merchantId], references: [id])
+  plan     MerchantPlan @relation(fields: [planId], references: [id])
+  invoices BillingInvoice[]
+
+  @@unique([merchantId])
+  @@map("subscriptions")
+}
+
+model BillingInvoice {
+  id             String       @id @default(uuid()) @db.Uuid
+  subscriptionId String       @db.Uuid
+  invoiceNumber  String       @unique
+  amount         Decimal      @db.Decimal(20, 4)
+  taxAmount      Decimal      @default(0) @db.Decimal(20, 4)
+  total          Decimal      @db.Decimal(20, 4)
+  currency       String       @default("INR")
+  status         String       @default("PENDING")
+  periodStart    DateTime
+  periodEnd      DateTime
+  paidAt         DateTime?
+  paidVia        String?
+  createdAt      DateTime     @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@index([subscriptionId])
+  @@index([status])
+  @@map("billing_invoices")
+}
+
+model FeeSchedule {
+  id                String   @id @default(uuid()) @db.Uuid
+  merchantId        String   @unique @db.Uuid
+  mdr               Decimal  @default(2.9) @db.Decimal(5, 4)
+  fixedFee          Decimal  @default(0.30) @db.Decimal(20, 4)
+  internationalMarkup Decimal @default(1.5) @db.Decimal(5, 4)
+  payoutFee         Decimal  @default(0) @db.Decimal(20, 4)
+  refundFee         Decimal  @default(0) @db.Decimal(20, 4)
+  chargebackFee     Decimal  @default(15) @db.Decimal(20, 4)
+  upiMdr            Decimal  @default(0) @db.Decimal(5, 4)
+  upiFixedFee       Decimal  @default(0) @db.Decimal(20, 4)
+  planTier          PlanTier @default(STARTER)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@map("fee_schedules")
+}
+
+model ReconciliationRun {
+  id              String   @id @default(uuid()) @db.Uuid
+  runType         String   @default("DAILY")
+  status          String   @default("RUNNING")
+  startedAt       DateTime @default(now())
+  completedAt     DateTime?
+  totalWallets    Int      @default(0)
+  matchedCount    Int      @default(0)
+  driftedCount    Int      @default(0)
+  autoCorrected   Int      @default(0)
+  errors          Json?
+  summary         Json?
+
+  @@map("reconciliation_runs")
+}
+
+model DailyBalance {
+  id              String   @id @default(uuid()) @db.Uuid
+  merchantId      String   @db.Uuid
+  currency        String
+  date            DateTime
+  openingBalance  Decimal  @db.Decimal(20, 4)
+  closingBalance  Decimal  @db.Decimal(20, 4)
+  totalCredits    Decimal  @default(0) @db.Decimal(20, 4)
+  totalDebits     Decimal  @default(0) @db.Decimal(20, 4)
+  paymentCount    Int      @default(0)
+  settlementCount Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  @@unique([merchantId, currency, date])
+  @@map("daily_balances")
+}
+
+model Incident {
+  id            String           @id @default(uuid()) @db.Uuid
+  title         String
+  description   String?
+  severity      IncidentSeverity @default(SEV3)
+  status        IncidentStatus   @default(DETECTED)
+  affectedServices Json           @default("[]")
+  detectedAt    DateTime         @default(now())
+  acknowledgedAt DateTime?
+  mitigatedAt   DateTime?
+  resolvedAt    DateTime?
+  rootCause     String?
+  impact        String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  updates IncidentUpdate[]
+
+  @@map("incidents")
+}
+
+model IncidentUpdate {
+  id          String   @id @default(uuid()) @db.Uuid
+  incidentId  String   @db.Uuid
+  message     String
+  status      String
+  createdBy   String?
+  createdAt   DateTime @default(now())
+
+  incident Incident @relation(fields: [incidentId], references: [id])
+
+  @@index([incidentId])
+  @@map("incident_updates")
+}
+
+model AdminActivityLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  adminId    String?
+  action     String
+  resource   String
+  resourceId String?
+  details    Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([adminId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("admin_activity_logs")
+}
+
+model SecurityEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  merchantId String?  @db.Uuid
+  type       String
+  severity   String   @default("INFO")
+  details    Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([merchantId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("security_events")
+}
+
+model SplitTransaction {
+  id           String    @id @default(uuid()) @db.Uuid
+  paymentId    String    @db.Uuid
+  subMerchantId String   @db.Uuid
+  splitType    SplitType @default(PERCENTAGE)
+  splitValue   Decimal   @db.Decimal(20, 4)
+  amount       Decimal   @db.Decimal(20, 4)
+  status       String    @default("PENDING")
+  releasedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  payment    Payment    @relation(fields: [paymentId], references: [id])
+  subMerchant SubMerchant @relation(fields: [subMerchantId], references: [id])
+
+  @@index([paymentId])
+  @@index([subMerchantId])
+  @@map("split_transactions")
+}
+
+model CannedResponse {
+  id        String   @id @default(uuid()) @db.Uuid
+  title     String
+  content   String
+  category  String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("canned_responses")
 }
 
 model RateLimit {

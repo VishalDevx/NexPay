@@ -16,6 +16,7 @@ import walletRouter from "./modules/wallets/wallets.router";
 import disputeRouter from "./modules/disputes/disputes.router";
 import payoutRouter from "./modules/payouts/payouts.router";
 import merchantRouter from "./modules/merchants/merchants.router";
+import merchantLifecycleRouter from "./modules/merchants/merchant-lifecycle.router";
 import adminRouter from "./modules/admin/admin.router";
 import analyticsRouter from "./modules/analytics/analytics.router";
 import bankAccountsRouter from "./modules/bank-accounts.router";
@@ -32,6 +33,15 @@ import uploadsRouter from "./modules/uploads/uploads.router";
 import reconciliationRouter from "./modules/reconciliation/reconciliation.router";
 import integrationsRouter from "./modules/integrations/integrations.router";
 import sandboxRouter from "./modules/sandbox/sandbox.router";
+import supportRouter from "./modules/support/support.router";
+import cannedResponsesRouter from "./modules/support/canned-responses.router";
+import reserveRouter from "./modules/reserve/reserve.router";
+import billingRouter from "./modules/billing/billing.router";
+import reconciliationDeepRouter from "./modules/reconciliation/reconciliation-deep.router";
+import securityRouter from "./modules/security/security.router";
+import marketplaceDeepRouter from "./modules/marketplace/marketplace-deep.router";
+import adminOpsRouter from "./modules/admin/admin-ops.router";
+import incidentsRouter from "./modules/incidents/incidents.router";
 
 import { webhookWorker } from "./workers/webhook.worker";
 import { payoutWorker } from "./workers/payout.worker";
@@ -56,9 +66,21 @@ app.get("/api/v1/health", (_req, res) => {
 
 app.use("/api/v1/merchants", merchantRouter);
 
+app.use("/api/v1/admin/ops", adminOpsRouter);
+app.use("/api/v1/incidents", incidentsRouter);
+
 app.use(authMiddleware);
 app.use(idempotencyMiddleware);
 app.use(sandboxMiddleware);
+
+app.use("/api/v1/merchants/lifecycle", merchantLifecycleRouter);
+app.use("/api/v1/support/tickets", supportRouter);
+app.use("/api/v1/support/canned-responses", cannedResponsesRouter);
+app.use("/api/v1/reserve", reserveRouter);
+app.use("/api/v1/billing", billingRouter);
+app.use("/api/v1/reconciliation-deep", reconciliationDeepRouter);
+app.use("/api/v1/security", securityRouter);
+app.use("/api/v1/marketplace-deep", marketplaceDeepRouter);
 
 app.use("/api/v1/payments", paymentRouter);
 app.use("/api/v1/customers", customerRouter);
