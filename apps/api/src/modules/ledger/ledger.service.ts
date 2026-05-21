@@ -8,7 +8,7 @@ async function acquireAdvisoryLock(tx: Prisma.TransactionClient, accountIds: str
   const sortedIds = [...accountIds].sort();
   for (const id of sortedIds) {
     const hash = id.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
-    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hash})`);
+    await (tx as any).$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hash})`);
   }
 }
 
@@ -39,12 +39,20 @@ export async function doubleEntryBook({
     const debitBalance = new Decimal(debitAccount.lastBalance.toString());
     const creditBalance = new Decimal(creditAccount.lastBalance.toString());
 
-    const newDebitBalance = debitBalance.plus(parsedAmount);
-    const newCreditBalance = creditBalance.minus(parsedAmount);
+    const isAssetDebit = debitAccount.type === "ASSET";
+    const isRevenueCredit = creditAccount.type === "REVENUE" || creditAccount.type === "LIABILITY";
 
-    if (newCreditBalance.isNegative()) {
+    const newDebitBalance = isAssetDebit
+      ? debitBalance.plus(parsedAmount)
+      : debitBalance.minus(parsedAmount);
+
+    const newCreditBalance = isRevenueCredit
+      ? creditBalance.plus(parsedAmount)
+      : creditBalance.minus(parsedAmount);
+
+    if (newDebitBalance.isNegative() || newCreditBalance.isNegative()) {
       throw new Error(
-        `Insufficient balance in credit account ${creditAccountId}: ${creditBalance} < ${parsedAmount}`
+        `Insufficient balance: debit=${debitBalance} -> ${newDebitBalance}, credit=${creditBalance} -> ${newCreditBalance}`
       );
     }
 
@@ -104,10 +112,10 @@ export async function createLedgerEntry(data: {
     const parsedAmount = new Decimal(data.amount).toDecimalPlaces(DECIMAL_PRECISION, Decimal.ROUND_HALF_UP);
     const currentBalance = new Decimal(account.lastBalance.toString());
 
-    const balanceAfter =
-      data.type === EntryType.DEBIT
-        ? currentBalance.plus(parsedAmount)
-        : currentBalance.minus(parsedAmount);
+    const isAsset = account.type === "ASSET";
+    const balanceAfter = (data.type === EntryType.DEBIT) === isAsset
+      ? currentBalance.plus(parsedAmount)
+      : currentBalance.minus(parsedAmount);
 
     if (balanceAfter.isNegative()) {
       throw new Error(

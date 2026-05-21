@@ -5,7 +5,8 @@ export function sandboxMiddleware(req: Request, res: Response, next: NextFunctio
 
   req.isSandbox = true;
 
-  const testCard = req.body?.paymentMethod?.card?.number;
+  const pm = req.body?.paymentMethod || req.body?.payment_method;
+  const testCard = pm?.card?.number;
   if (testCard) {
     const scenarios: Record<string, { status: string; fraudScore: number }> = {
       "4242424242424242": { status: "CAPTURED", fraudScore: 0 },

@@ -125,12 +125,24 @@ export const paymentService = {
       reason: "Payment authorized",
     });
 
-    return paymentRepo.transition({
+    await paymentRepo.transition({
       paymentId: payment.id,
       toStatus: PaymentStatus.CAPTURED,
       actor: "system",
       reason: "Payment captured",
     });
+
+    const accounts = await ledgerRepo.getOrCreateAccounts(input.merchantId, input.currency);
+    await doubleEntryBook({
+      debitAccountId: accounts.assetAccount.id,
+      creditAccountId: accounts.revenueAccount.id,
+      paymentId: payment.id,
+      amount: input.amount,
+      currency: input.currency,
+      description: `Payment charge: ${input.description || payment.id}`,
+    });
+
+    return paymentRepo.findById(payment.id);
   },
 
   async capture(paymentId: string, actor: string = "merchant") {
