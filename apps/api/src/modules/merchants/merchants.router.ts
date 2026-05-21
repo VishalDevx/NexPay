@@ -213,7 +213,7 @@ authRouter.post("/mfa/totp/disable", async (req: Request, res: Response) => {
   try {
     await prisma.merchant.update({
       where: { id: req.merchant!.id },
-      data: { totpSecret: null, totpEnabled: false, backupCodes: null },
+      data: { totpSecret: null, totpEnabled: false, backupCodes: undefined },
     });
     res.json({ status: "totp_disabled" });
   } catch (err: any) {
