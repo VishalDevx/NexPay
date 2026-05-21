@@ -14,6 +14,9 @@ import {
   ChevronRight,
   Menu,
   Users,
+  Beaker,
+  BookOpen,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -23,7 +26,10 @@ const navItems = [
   { href: "/transactions", label: "Transactions", icon: CreditCard },
   { href: "/payouts", label: "Payouts", icon: Wallet },
   { href: "/disputes", label: "Disputes", icon: Shield },
+  { href: "/sandbox", label: "Sandbox", icon: Beaker },
+  { href: "/reconciliation", label: "Ledger", icon: BookOpen },
   { href: "/developers", label: "Developers", icon: Settings },
+  { href: "/onboarding", label: "Onboarding", icon: Building2 },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
