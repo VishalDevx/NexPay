@@ -1,255 +1,123 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../../config/db";
-import { redis } from "../../config/redis";
-import { randomUUID } from "crypto";
+import { reconciliationService } from "./reconciliation.service";
 
 const router = Router();
 
-router.get("/ledger", async (req: Request, res: Response) => {
+router.post("/runs", async (req: Request, res: Response) => {
   try {
-    const { accountType, startDate, endDate, limit, offset } = req.query;
+    const { runType } = req.body;
+    const result = await reconciliationService.startRun(runType || "FULL");
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: "server_error", message: err.message });
+  }
+});
 
-    const accounts = await prisma.account.findMany({
-      where: {
-        merchantId: req.merchant!.id,
-        ...(accountType ? { type: accountType as any } : {}),
-      },
-    });
+router.get("/runs", async (req: Request, res: Response) => {
+  try {
+    const runs = await reconciliationService.getReconciliationReport();
+    res.json({ data: runs });
+  } catch (err: any) {
+    res.status(500).json({ error: "server_error", message: err.message });
+  }
+});
 
-    const accountIds = accounts.map((a) => a.id);
+router.get("/runs/:id", async (req: Request, res: Response) => {
+  try {
+    const report = await reconciliationService.getReconciliationReport(req.params.id);
+    if (!report) return res.status(404).json({ error: "not_found" });
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: "server_error", message: err.message });
+  }
+});
 
-    const where: any = {
-      accountId: { in: accountIds },
-    };
-
-    if (startDate) {
-      where.createdAt = { ...where.createdAt, gte: new Date(startDate as string) };
-    }
-    if (endDate) {
-      where.createdAt = { ...where.createdAt, lte: new Date(endDate as string) };
-    }
-
-    const take = Math.min(Number(limit) || 50, 200);
-    const skip = Number(offset) || 0;
-
-    const [entries, total] = await Promise.all([
-      prisma.ledgerEntry.findMany({
+router.get("/matches", async (req: Request, res: Response) => {
+  try {
+    const { runId, matchType, status, limit, offset } = req.query;
+    const where: any = {};
+    if (runId) where.runId = runId;
+    if (matchType) where.matchType = matchType;
+    if (status) where.status = status;
+    const [data, total] = await Promise.all([
+      prisma.reconciliationMatch.findMany({
         where,
-        include: { account: true },
         orderBy: { createdAt: "desc" },
-        take,
-        skip,
+        take: limit ? parseInt(limit as string) : 100,
+        skip: offset ? parseInt(offset as string) : 0,
       }),
-      prisma.ledgerEntry.count({ where }),
+      prisma.reconciliationMatch.count({ where }),
     ]);
-
-    res.json({
-      data: entries.map((e) => ({
-        id: e.id,
-        account: {
-          type: e.account.type,
-          name: e.account.name,
-          currency: e.account.currency,
-        },
-        type: e.type,
-        amount: e.amount,
-        balanceAfter: e.balanceAfter,
-        description: e.description,
-        createdAt: e.createdAt,
-      })),
-      total,
-    });
+    res.json({ data, total });
   } catch (err: any) {
     res.status(500).json({ error: "server_error", message: err.message });
   }
 });
 
-router.get("/report", async (req: Request, res: Response) => {
+router.patch("/matches/:id/resolve", async (req: Request, res: Response) => {
   try {
-    const wallets = await prisma.wallet.findMany({
-      where: { merchantId: req.merchant!.id },
-    });
+    const { resolution } = req.body;
+    if (!resolution) return res.status(400).json({ error: "validation_error", message: "resolution is required" });
+    const match = await reconciliationService.resolveMatch(req.params.id, resolution, (req as any).merchant?.id || "admin");
+    res.json(match);
+  } catch (err: any) {
+    res.status(400).json({ error: "reconciliation_error", message: err.message });
+  }
+});
 
-    const accounts = await prisma.account.findMany({
-      where: { merchantId: req.merchant!.id },
-      include: {
-        ledgerEntries: { orderBy: { createdAt: "desc" }, take: 1 },
-      },
-    });
-
-    const report = await Promise.all(
-      wallets.map(async (wallet) => {
-        const walletBalance = parseFloat(await redis.get(wallet.redisBalanceKey) || "0");
-        const matchedAccount = accounts.find((a) => a.currency === wallet.currency);
-        const ledgerBalance = parseFloat(matchedAccount?.ledgerEntries[0]?.balanceAfter?.toString() || "0");
-        const drift = walletBalance - ledgerBalance;
-
-        return {
-          currency: wallet.currency,
-          walletBalance,
-          ledgerBalance,
-          drift,
-          status: Math.abs(drift) < 0.01 ? "MATCHED" : "DRIFTED",
-        };
-      })
-    );
-
-    res.json({ report, generatedAt: new Date().toISOString() });
+router.get("/rules", async (_req: Request, res: Response) => {
+  try {
+    const rules = await prisma.reconciliationRule.findMany({ orderBy: { priority: "asc" } });
+    res.json({ data: rules });
   } catch (err: any) {
     res.status(500).json({ error: "server_error", message: err.message });
   }
 });
 
-router.post("/report/correct", async (req: Request, res: Response) => {
+router.post("/settlement-batches", async (req: Request, res: Response) => {
   try {
-    const wallets = await prisma.wallet.findMany({
-      where: { merchantId: req.merchant!.id },
-    });
-
-    const accounts = await prisma.account.findMany({
-      where: { merchantId: req.merchant!.id },
-      include: {
-        ledgerEntries: { orderBy: { createdAt: "desc" }, take: 1 },
-      },
-    });
-
-    const corrected: { currency: string; driftAmount: number; newLedgerBalance: number }[] = [];
-
-    for (const wallet of wallets) {
-      const walletBalance = parseFloat(await redis.get(wallet.redisBalanceKey) || "0");
-      const matchedAccount = accounts.find((a) => a.currency === wallet.currency);
-      if (!matchedAccount) continue;
-
-      const ledgerBalance = parseFloat(matchedAccount.ledgerEntries[0]?.balanceAfter?.toString() || "0");
-      const drift = walletBalance - ledgerBalance;
-
-      if (Math.abs(drift) < 0.01) continue;
-
-      if (drift > 0) {
-        await prisma.ledgerEntry.create({
-          data: {
-            accountId: matchedAccount.id,
-            paymentId: null,
-            type: "CREDIT",
-            amount: Math.abs(drift).toFixed(4),
-            currency: wallet.currency,
-            balanceAfter: walletBalance.toFixed(4),
-            description: `Reconciliation correction: wallet ${wallet.currency} drift ${drift.toFixed(4)}`,
-          },
-        });
-        await prisma.account.update({
-          where: { id: matchedAccount.id },
-          data: { lastBalance: walletBalance.toFixed(4) },
-        });
-      } else {
-        await prisma.ledgerEntry.create({
-          data: {
-            accountId: matchedAccount.id,
-            paymentId: null,
-            type: "DEBIT",
-            amount: Math.abs(drift).toFixed(4),
-            currency: wallet.currency,
-            balanceAfter: walletBalance.toFixed(4),
-            description: `Reconciliation correction: wallet ${wallet.currency} drift ${drift.toFixed(4)}`,
-          },
-        });
-        await prisma.account.update({
-          where: { id: matchedAccount.id },
-          data: { lastBalance: walletBalance.toFixed(4) },
-        });
-      }
-
-      corrected.push({
-        currency: wallet.currency,
-        driftAmount: drift,
-        newLedgerBalance: walletBalance,
-      });
+    const { reference, description, totalAmount, currency, items } = req.body;
+    if (!reference || !totalAmount || !items || !Array.isArray(items)) {
+      return res.status(400).json({ error: "validation_error", message: "reference, totalAmount, and items are required" });
     }
-
-    res.json({ corrected, status: "CORRECTED" });
-  } catch (err: any) {
-    res.status(422).json({ error: "correction_failed", message: err.message });
-  }
-});
-
-router.get("/jobs", async (req: Request, res: Response) => {
-  try {
-    const reconciliationLastRun = await redis.get("cron:reconciliation:lastRun");
-    const fraudUnblockLastRun = await redis.get("cron:fraud-unblock:lastRun");
-    const webhookRetryLastRun = await redis.get("cron:webhook-retry:lastRun");
-
-    const now = Date.now();
-
-    res.json({
-      data: [
-        {
-          name: "reconciliation",
-          type: "cron",
-          schedule: "0 2 * * *",
-          lastRun: reconciliationLastRun || null,
-          nextRun: new Date(now + 86400000).toISOString(),
-          health: "healthy",
-        },
-        {
-          name: "fraud-unblock",
-          type: "cron",
-          schedule: "*/30 * * * *",
-          lastRun: fraudUnblockLastRun || null,
-          nextRun: new Date(now + 1800000).toISOString(),
-          health: "healthy",
-        },
-        {
-          name: "webhook-retry",
-          type: "cron",
-          schedule: "*/5 * * * *",
-          lastRun: webhookRetryLastRun || null,
-          nextRun: new Date(now + 300000).toISOString(),
-          health: "healthy",
-        },
-      ],
-    });
+    const batch = await reconciliationService.importSettlementBatch({ reference, description, totalAmount, currency, items });
+    res.status(201).json(batch);
   } catch (err: any) {
     res.status(500).json({ error: "server_error", message: err.message });
   }
 });
 
-router.get("/alerts", async (req: Request, res: Response) => {
+router.get("/settlement-batches", async (req: Request, res: Response) => {
   try {
-    const adjustments = await prisma.ledgerAdjustment.findMany({
-      where: { status: "PENDING" },
-      orderBy: { createdAt: "desc" },
-      take: 50,
+    const summary = await reconciliationService.getSettlementBatchSummary();
+    res.json(summary);
+  } catch (err: any) {
+    res.status(500).json({ error: "server_error", message: err.message });
+  }
+});
+
+router.get("/settlement-batches/:id", async (req: Request, res: Response) => {
+  try {
+    const batch = await prisma.settlementBatch.findUnique({
+      where: { id: req.params.id },
+      include: { items: { orderBy: { createdAt: "desc" } } },
     });
+    if (!batch) return res.status(404).json({ error: "not_found" });
+    res.json(batch);
+  } catch (err: any) {
+    res.status(500).json({ error: "server_error", message: err.message });
+  }
+});
 
-    const failedWebhooks = await prisma.webhookDelivery.findMany({
-      where: { status: "FAILED" },
-      include: { endpoint: true },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-    });
-
-    const alerts = [
-      ...adjustments.map((a) => ({
-        id: a.id,
-        type: "ledger_adjustment",
-        severity: "warning" as const,
-        message: `Ledger adjustment ${a.type} of ${a.amount} on account ${a.accountId}: ${a.reason}`,
-        status: a.status,
-        createdAt: a.createdAt,
-      })),
-      ...failedWebhooks.map((w) => ({
-        id: w.id,
-        type: "webhook_failure",
-        severity: "critical" as const,
-        message: `Webhook delivery failed to ${w.endpoint.url} after ${w.attempts} attempts`,
-        status: w.status,
-        createdAt: w.createdAt,
-      })),
-    ];
-
-    alerts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-    res.json({ data: alerts });
+router.get("/summary", async (_req: Request, res: Response) => {
+  try {
+    const [openMatches, recentRuns, unmatchedBatches] = await Promise.all([
+      prisma.reconciliationMatch.count({ where: { status: { in: ["OPEN", "ESCALATED"] } } }),
+      prisma.reconciliationRun.findMany({ orderBy: { startedAt: "desc" }, take: 5 }),
+      prisma.settlementBatch.count({ where: { status: { notIn: ["RECONCILED"] } } }),
+    ]);
+    res.json({ openMatches, recentRuns: recentRuns.length, unmatchedBatches, lastRun: recentRuns[0] || null });
   } catch (err: any) {
     res.status(500).json({ error: "server_error", message: err.message });
   }

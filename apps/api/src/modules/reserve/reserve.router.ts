@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../../config/db";
+import { glService } from "../general-ledger/gl.service";
 
 const router = Router();
 
@@ -38,6 +39,17 @@ router.post("/hold", async (req: Request, res: Response) => {
       where: { merchantId: req.merchant!.id },
       data: { manualHold: true, manualHoldAmount: amount, manualHoldReason: reason, currentReserveBalance: { increment: amount } },
     });
+
+    await glService.createEntry({
+      transactionId: updated.id,
+      transactionType: "reserve_hold",
+      description: `Manual reserve hold: ${reason || "No reason provided"}`,
+      lines: [
+        { accountCode: "1300", debit: amount, description: "Reserve fund allocation" },
+        { accountCode: "2200", credit: amount, description: "Reserve liability" },
+      ],
+    }).catch((err) => console.error("GL entry failed (non-blocking):", err.message));
+
     res.json(updated);
   } catch (err: any) {
     res.status(500).json({ error: "server_error", message: err.message });
@@ -52,6 +64,17 @@ router.post("/release", async (req: Request, res: Response) => {
       data: { configId: config.id, amount: config.currentReserveBalance, scheduledDate: new Date(Date.now() + config.releaseDelayDays * 86400000) },
     });
     await prisma.reserveConfig.update({ where: { merchantId: req.merchant!.id }, data: { currentReserveBalance: 0 } });
+
+    await glService.createEntry({
+      transactionId: release.id,
+      transactionType: "reserve_release",
+      description: `Reserve release scheduled for ${release.scheduledDate.toISOString()}`,
+      lines: [
+        { accountCode: "2200", debit: release.amount, description: "Reserve liability reduction" },
+        { accountCode: "1300", credit: release.amount, description: "Reserve fund release" },
+      ],
+    }).catch((err) => console.error("GL entry failed (non-blocking):", err.message));
+
     res.status(201).json(release);
   } catch (err: any) {
     res.status(500).json({ error: "server_error", message: err.message });

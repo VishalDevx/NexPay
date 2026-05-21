@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../../config/db";
+import { cancelSubscription } from "../../workers/billing.worker";
 
 const router = Router();
 
@@ -37,6 +38,15 @@ router.post("/subscribe", async (req: Request, res: Response) => {
     res.status(201).json(sub);
   } catch (err: any) {
     res.status(500).json({ error: "server_error", message: err.message });
+  }
+});
+
+router.post("/cancel", async (req: Request, res: Response) => {
+  try {
+    const result = await cancelSubscription(req.merchant!.id);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: "cancel_failed", message: err.message });
   }
 });
 

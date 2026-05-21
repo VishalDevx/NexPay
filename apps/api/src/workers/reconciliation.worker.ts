@@ -1,5 +1,6 @@
 import { prisma } from "../config/db";
 import { redis } from "../config/redis";
+import { reconciliationService } from "../modules/reconciliation/reconciliation.service";
 import Decimal from "decimal.js";
 
 export async function runReconciliation() {
@@ -50,6 +51,22 @@ export async function runReconciliation() {
     } catch (err) {
       console.error(`[Reconciliation] Error processing wallet ${wallet.id}:`, err);
     }
+  }
+
+  try {
+    console.log("[Reconciliation] Running payment-ledger reconciliation...");
+    const result = await reconciliationService.startRun("PAYMENT_LEDGER");
+    console.log(`[Reconciliation] Payment-ledger done: ${JSON.stringify(result.result)}`);
+  } catch (err) {
+    console.error("[Reconciliation] Payment-ledger reconciliation failed:", err);
+  }
+
+  try {
+    console.log("[Reconciliation] Running settlement reconciliation...");
+    const result = await reconciliationService.startRun("SETTLEMENT");
+    console.log(`[Reconciliation] Settlement reconciliation done: ${JSON.stringify(result.result)}`);
+  } catch (err) {
+    console.error("[Reconciliation] Settlement reconciliation failed:", err);
   }
 
   console.log("[Reconciliation] Completed");

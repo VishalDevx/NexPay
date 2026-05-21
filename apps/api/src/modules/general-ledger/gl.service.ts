@@ -4,7 +4,7 @@ import Decimal from "decimal.js";
 
 const DECIMAL_PRECISION = 4;
 
-function validateBalancedLines(lines: { accountCode: string; debit?: Decimal | number | string; credit?: Decimal | number | string }[]): { accountCode: string; debit: Decimal; credit: Decimal }[] {
+function validateBalancedLines(lines: { accountCode: string; debit?: Decimal | number | string; credit?: Decimal | number | string; description?: string }[]): { accountCode: string; debit: Decimal; credit: Decimal; description?: string }[] {
   if (lines.length < 2) {
     throw new Error("Journal entry must have at least 2 lines");
   }
@@ -12,6 +12,7 @@ function validateBalancedLines(lines: { accountCode: string; debit?: Decimal | n
     accountCode: l.accountCode,
     debit: new Decimal(l.debit || 0).toDecimalPlaces(DECIMAL_PRECISION, Decimal.ROUND_HALF_UP),
     credit: new Decimal(l.credit || 0).toDecimalPlaces(DECIMAL_PRECISION, Decimal.ROUND_HALF_UP),
+    description: l.description,
   }));
   const totalDebit = processed.reduce((s, l) => s.plus(l.debit), new Decimal(0));
   const totalCredit = processed.reduce((s, l) => s.plus(l.credit), new Decimal(0));

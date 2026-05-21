@@ -43,11 +43,13 @@ import marketplaceDeepRouter from "./modules/marketplace/marketplace-deep.router
 import adminOpsRouter from "./modules/admin/admin-ops.router";
 import incidentsRouter from "./modules/incidents/incidents.router";
 import glRouter from "./modules/general-ledger/gl.router";
+import billingAdminRouter from "./modules/billing/billing-admin.router";
 
 import { webhookWorker } from "./workers/webhook.worker";
 import { payoutWorker } from "./workers/payout.worker";
 import { runReconciliation } from "./workers/reconciliation.worker";
 import { runFraudUnblock } from "./workers/fraud-unblock.worker";
+import { runBilling } from "./workers/billing.worker";
 
 const app = express();
 
@@ -68,6 +70,7 @@ app.get("/api/v1/health", (_req, res) => {
 app.use("/api/v1/merchants", merchantRouter);
 
 app.use("/api/v1/admin/ops", adminOpsRouter);
+app.use("/api/v1/admin/billing", billingAdminRouter);
 app.use("/api/v1/incidents", incidentsRouter);
 
 app.use(authMiddleware);
@@ -119,6 +122,11 @@ cron.schedule("0 2 * * *", () => {
 cron.schedule("*/30 * * * *", () => {
   console.log("[Cron] Running fraud unblock cleanup...");
   runFraudUnblock().catch(console.error);
+});
+
+cron.schedule("0 3 1 * *", () => {
+  console.log("[Cron] Starting monthly billing invoicing...");
+  runBilling().catch(console.error);
 });
 
 const server = app.listen(env.PORT, () => {

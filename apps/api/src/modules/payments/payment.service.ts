@@ -4,9 +4,34 @@ import { paymentRepo } from "./payment.repo";
 import { doubleEntryBook } from "../ledger/ledger.service";
 import { ledgerRepo } from "../ledger/ledger.repo";
 import { fraudEngine } from "../fraud/fraud.engine";
+import { glService } from "../general-ledger/gl.service";
+import { billingService } from "../billing/billing.service";
 import Decimal from "decimal.js";
 
 const DECIMAL_PRECISION = 4;
+
+async function applyRollingReserve(merchantId: string, paymentId: string, amount: string) {
+  const config = await prisma.reserveConfig.findUnique({ where: { merchantId } });
+  if (!config || config.reservePercentage.isZero()) return;
+
+  const reserveAmount = new Decimal(amount).mul(config.reservePercentage).div(100).toDecimalPlaces(DECIMAL_PRECISION, Decimal.ROUND_HALF_UP);
+  if (reserveAmount.isZero()) return;
+
+  await prisma.reserveConfig.update({
+    where: { merchantId },
+    data: { currentReserveBalance: { increment: reserveAmount } },
+  });
+
+  await glService.createEntry({
+    transactionId: paymentId,
+    transactionType: "payment_reserve",
+    description: `Rolling reserve hold (${config.reservePercentage}% of ${amount})`,
+    lines: [
+      { accountCode: "3100", debit: reserveAmount.toFixed(DECIMAL_PRECISION), description: "Reserve from processing fees" },
+      { accountCode: "2200", credit: reserveAmount.toFixed(DECIMAL_PRECISION), description: "Reserve liability" },
+    ],
+  }).catch((err) => console.error("GL reserve entry failed (non-blocking):", err.message));
+}
 
 export const paymentService = {
   async charge(input: {
@@ -91,6 +116,22 @@ export const paymentService = {
         description: `Payment charge: ${input.description || payment.id}`,
       });
 
+      const { fee, net } = await billingService.calculateTransactionFee({ merchantId: input.merchantId, amount: input.amount, currency: input.currency });
+      await prisma.payment.update({ where: { id: payment.id }, data: { metadata: { ...((payment.metadata as any) || {}), fee: fee.toFixed(DECIMAL_PRECISION), netAmount: net.toFixed(DECIMAL_PRECISION) } } });
+
+      await glService.createEntry({
+        transactionId: payment.id,
+        transactionType: "payment",
+        description: `Payment charge: ${input.description || payment.id}`,
+        lines: [
+          { accountCode: "1200", debit: input.amount, description: "Settlement holding" },
+          { accountCode: "3100", credit: fee.toFixed(DECIMAL_PRECISION), description: "Processing fee revenue" },
+          { accountCode: "2100", credit: net.toFixed(DECIMAL_PRECISION), description: "Merchant payable" },
+        ],
+      }).catch((err) => console.error("GL entry failed (non-blocking):", err.message));
+
+      await applyRollingReserve(input.merchantId, payment.id, input.amount).catch((err) => console.error("Rolling reserve failed (non-blocking):", err.message));
+
       return paymentRepo.findById(payment.id);
     }
 
@@ -142,6 +183,22 @@ export const paymentService = {
       description: `Payment charge: ${input.description || payment.id}`,
     });
 
+    const { fee, net } = await billingService.calculateTransactionFee({ merchantId: input.merchantId, amount: input.amount, currency: input.currency });
+    await prisma.payment.update({ where: { id: payment.id }, data: { metadata: { ...((payment.metadata as any) || {}), fee: fee.toFixed(DECIMAL_PRECISION), netAmount: net.toFixed(DECIMAL_PRECISION) } } });
+
+    await glService.createEntry({
+      transactionId: payment.id,
+      transactionType: "payment",
+      description: `Payment charge: ${input.description || payment.id}`,
+      lines: [
+        { accountCode: "1200", debit: input.amount, description: "Settlement holding" },
+        { accountCode: "3100", credit: fee.toFixed(DECIMAL_PRECISION), description: "Processing fee revenue" },
+        { accountCode: "2100", credit: net.toFixed(DECIMAL_PRECISION), description: "Merchant payable" },
+      ],
+    }).catch((err) => console.error("GL entry failed (non-blocking):", err.message));
+
+    await applyRollingReserve(input.merchantId, payment.id, input.amount).catch((err) => console.error("Rolling reserve failed (non-blocking):", err.message));
+
     return paymentRepo.findById(payment.id);
   },
 
@@ -165,6 +222,22 @@ export const paymentService = {
       currency: payment.currency,
       description: `Payment capture: ${payment.id}`,
     });
+
+    const { fee, net } = await billingService.calculateTransactionFee({ merchantId: payment.merchantId, amount: payment.amount.toFixed(DECIMAL_PRECISION), currency: payment.currency });
+    await prisma.payment.update({ where: { id: payment.id }, data: { metadata: { ...((payment.metadata as any) || {}), fee: fee.toFixed(DECIMAL_PRECISION), netAmount: net.toFixed(DECIMAL_PRECISION) } } });
+
+    await glService.createEntry({
+      transactionId: payment.id,
+      transactionType: "payment",
+      description: `Payment capture: ${payment.id}`,
+      lines: [
+        { accountCode: "1200", debit: payment.amount.toFixed(DECIMAL_PRECISION), description: "Settlement holding" },
+        { accountCode: "3100", credit: fee.toFixed(DECIMAL_PRECISION), description: "Processing fee revenue" },
+        { accountCode: "2100", credit: net.toFixed(DECIMAL_PRECISION), description: "Merchant payable" },
+      ],
+    }).catch((err) => console.error("GL entry failed (non-blocking):", err.message));
+
+    await applyRollingReserve(payment.merchantId, payment.id, payment.amount.toFixed(DECIMAL_PRECISION)).catch((err) => console.error("Rolling reserve failed (non-blocking):", err.message));
 
     return updated;
   },
@@ -245,6 +318,42 @@ export const paymentService = {
         currency: payment.currency,
         description: `Refund: ${reason || payment.id}`,
       });
+
+      const paymentMeta = payment.metadata as any;
+      const capturedFee = paymentMeta?.fee ? new Decimal(paymentMeta.fee) : null;
+      const refundFee = capturedFee ? refundAmount.mul(capturedFee).div(payment.amount).toDecimalPlaces(DECIMAL_PRECISION, Decimal.ROUND_HALF_UP) : refundAmount;
+      const refundNet = refundAmount.minus(refundFee);
+
+      await glService.createEntry({
+        transactionId: refund.id,
+        transactionType: "refund",
+        description: `Refund: ${reason || payment.id}`,
+        lines: [
+          { accountCode: "3100", debit: refundFee.toFixed(DECIMAL_PRECISION), description: "Revenue reversal" },
+          { accountCode: "2100", debit: refundNet.toFixed(DECIMAL_PRECISION), description: "Merchant payable reduction" },
+          { accountCode: "1200", credit: refundAmount.toFixed(DECIMAL_PRECISION), description: "Settlement holding release" },
+        ],
+      }).catch((err) => console.error("GL entry failed (non-blocking):", err.message));
+
+      const reserveConfig = await prisma.reserveConfig.findUnique({ where: { merchantId: payment.merchantId } });
+      if (reserveConfig && !reserveConfig.reservePercentage.isZero()) {
+        const reserveRefund = refundAmount.mul(reserveConfig.reservePercentage).div(100).toDecimalPlaces(DECIMAL_PRECISION, Decimal.ROUND_HALF_UP);
+        if (!reserveRefund.isZero()) {
+          await prisma.reserveConfig.update({
+            where: { merchantId: payment.merchantId },
+            data: { currentReserveBalance: { decrement: reserveRefund } },
+          });
+          await glService.createEntry({
+            transactionId: refund.id,
+            transactionType: "refund_reserve",
+            description: `Reserve release on refund (${reserveConfig.reservePercentage}% of ${refundAmount})`,
+            lines: [
+              { accountCode: "2200", debit: reserveRefund.toFixed(DECIMAL_PRECISION), description: "Reserve liability reduction" },
+              { accountCode: "3100", credit: reserveRefund.toFixed(DECIMAL_PRECISION), description: "Reserve returned to revenue" },
+            ],
+          }).catch((err) => console.error("GL reserve refund entry failed (non-blocking):", err.message));
+        }
+      }
 
       return refund;
     });

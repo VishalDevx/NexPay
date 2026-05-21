@@ -2,6 +2,7 @@ import { Worker } from "bullmq";
 import { prisma } from "../config/db";
 import { env } from "../config/env";
 import { PayoutStatus, PaymentStatus } from "@prisma/client";
+import { glService } from "../modules/general-ledger/gl.service";
 import Decimal from "decimal.js";
 
 export const payoutWorker = new Worker(
@@ -65,6 +66,16 @@ export const payoutWorker = new Worker(
         completedAt: new Date(),
       },
     });
+
+    await glService.createEntry({
+      transactionId: payoutId,
+      transactionType: "payout",
+      description: `Payout completed: ${bankRef}`,
+      lines: [
+        { accountCode: "2100", debit: payout.amount.toFixed(4), description: "Merchant payable reduction" },
+        { accountCode: "1100", credit: payout.amount.toFixed(4), description: "Cash disbursement" },
+      ],
+    }).catch((err) => console.error("GL entry failed (non-blocking):", err.message));
   },
   {
     connection: { url: env.REDIS_URL },
