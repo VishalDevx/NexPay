@@ -11,6 +11,7 @@ import { rateLimitMiddleware } from "./middleware/rate-limit";
 import { sandboxMiddleware } from "./middleware/sandbox";
 
 import paymentRouter from "./modules/payments/payment.router";
+import customerRouter from "./modules/payments/customers.router";
 import walletRouter from "./modules/wallets/wallets.router";
 import disputeRouter from "./modules/disputes/disputes.router";
 import payoutRouter from "./modules/payouts/payouts.router";
@@ -45,6 +46,7 @@ app.use(idempotencyMiddleware);
 app.use(sandboxMiddleware);
 
 app.use("/api/v1/payments", paymentRouter);
+app.use("/api/v1/customers", customerRouter);
 app.use("/api/v1/wallets", walletRouter);
 app.use("/api/v1/disputes", disputeRouter);
 app.use("/api/v1/payouts", payoutRouter);

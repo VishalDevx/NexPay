@@ -1,7 +1,8 @@
 import { prisma } from "../../config/db";
 import { PaymentStatus } from "@prisma/client";
 import { paymentRepo } from "./payment.repo";
-import { doubleEntryBook, ledgerRepo } from "../ledger/ledger.service";
+import { doubleEntryBook } from "../ledger/ledger.service";
+import { ledgerRepo } from "../ledger/ledger.repo";
 import { fraudEngine } from "../fraud/fraud.engine";
 import Decimal from "decimal.js";
 
@@ -10,6 +11,7 @@ const DECIMAL_PRECISION = 4;
 export const paymentService = {
   async charge(input: {
     merchantId: string;
+    customerId?: string;
     amount: string;
     currency: string;
     paymentMethod: any;
@@ -22,6 +24,7 @@ export const paymentService = {
   }) {
     const payment = await paymentRepo.create({
       merchantId: input.merchantId,
+      customerId: input.customerId,
       amount: input.amount,
       currency: input.currency,
       paymentMethod: input.paymentMethod,
@@ -39,7 +42,6 @@ export const paymentService = {
 
     if (input.isSandbox && input.sandboxScenario) {
       const scenario = input.sandboxScenario;
-
       if (scenario.fraudScore > 0) {
         await prisma.fraudEvent.create({
           data: {
@@ -155,7 +157,23 @@ export const paymentService = {
     return updated;
   },
 
-  async refund(paymentId: string, reason?: string) {
+  async cancel(paymentId: string, reason?: string) {
+    const payment = await paymentRepo.findById(paymentId);
+    if (!payment) throw new Error("Payment not found");
+
+    if (![PaymentStatus.INITIATED, PaymentStatus.PROCESSING].includes(payment.status)) {
+      throw new Error("Can only cancel payments in INITIATED or PROCESSING state");
+    }
+
+    return paymentRepo.transition({
+      paymentId,
+      toStatus: PaymentStatus.FAILED,
+      actor: "merchant",
+      reason: reason || "Cancelled by merchant",
+    });
+  },
+
+  async refund(paymentId: string, amount?: string, reason?: string) {
     const payment = await paymentRepo.findById(paymentId);
     if (!payment) throw new Error("Payment not found");
 
@@ -163,23 +181,60 @@ export const paymentService = {
       throw new Error("Can only refund captured or settled payments");
     }
 
-    const updated = await paymentRepo.transition({
-      paymentId,
-      toStatus: PaymentStatus.REFUNDED,
-      actor: "merchant",
-      reason: reason || "Refund requested",
-    });
+    const refundAmount = amount ? new Decimal(amount) : new Decimal(payment.amount.toString());
+    const alreadyRefunded = new Decimal(payment.amountRefunded?.toString() || "0");
+    const available = new Decimal(payment.amount.toString()).minus(alreadyRefunded);
 
-    const accounts = await ledgerRepo.getOrCreateAccounts(payment.merchantId, payment.currency);
-    await doubleEntryBook({
-      debitAccountId: accounts.revenueAccount.id,
-      creditAccountId: accounts.assetAccount.id,
-      paymentId: payment.id,
-      amount: payment.amount.toFixed(DECIMAL_PRECISION),
-      currency: payment.currency,
-      description: `Payment refund: ${payment.id}`,
-    });
+    if (refundAmount.gt(available)) {
+      throw new Error(
+        `Refund amount ${refundAmount} exceeds available balance ${available}`
+      );
+    }
 
-    return updated;
+    return prisma.$transaction(async (tx) => {
+      const refund = await tx.refund.create({
+        data: {
+          paymentId,
+          amount: refundAmount.toFixed(DECIMAL_PRECISION),
+          reason: reason || null,
+          status: "SUCCEEDED",
+        },
+      });
+
+      const newRefunded = alreadyRefunded.plus(refundAmount);
+      const isFullRefund = newRefunded.gte(new Decimal(payment.amount.toString()));
+
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: {
+          amountRefunded: newRefunded.toFixed(DECIMAL_PRECISION),
+          status: isFullRefund ? PaymentStatus.REFUNDED : payment.status,
+        },
+      });
+
+      if (isFullRefund) {
+        await tx.paymentEvent.create({
+          data: {
+            paymentId,
+            fromStatus: payment.status,
+            toStatus: PaymentStatus.REFUNDED,
+            actor: "merchant",
+            reason: reason || "Full refund",
+          },
+        });
+      }
+
+      const accounts = await ledgerRepo.getOrCreateAccounts(payment.merchantId, payment.currency);
+      await doubleEntryBook({
+        debitAccountId: accounts.revenueAccount.id,
+        creditAccountId: accounts.assetAccount.id,
+        paymentId: payment.id,
+        amount: refundAmount.toFixed(DECIMAL_PRECISION),
+        currency: payment.currency,
+        description: `Refund: ${reason || payment.id}`,
+      });
+
+      return refund;
+    });
   },
 };

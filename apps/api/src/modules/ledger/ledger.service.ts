@@ -1,26 +1,108 @@
 import { prisma } from "../../config/db";
-import { EntryType } from "@prisma/client";
+import { EntryType, Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 
-interface LedgerEntryInput {
+const DECIMAL_PRECISION = 4;
+
+async function acquireAdvisoryLock(tx: Prisma.TransactionClient, accountIds: string[]) {
+  const sortedIds = [...accountIds].sort();
+  for (const id of sortedIds) {
+    const hash = id.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
+    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hash})`);
+  }
+}
+
+export async function doubleEntryBook({
+  debitAccountId,
+  creditAccountId,
+  paymentId,
+  amount,
+  currency,
+  description,
+}: {
+  debitAccountId: string;
+  creditAccountId: string;
+  paymentId: string | null;
+  amount: string;
+  currency: string;
+  description: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    await acquireAdvisoryLock(tx, [debitAccountId, creditAccountId]);
+
+    const [debitAccount, creditAccount] = await Promise.all([
+      tx.account.findUniqueOrThrow({ where: { id: debitAccountId } }),
+      tx.account.findUniqueOrThrow({ where: { id: creditAccountId } }),
+    ]);
+
+    const parsedAmount = new Decimal(amount).toDecimalPlaces(DECIMAL_PRECISION, Decimal.ROUND_HALF_UP);
+    const debitBalance = new Decimal(debitAccount.lastBalance.toString());
+    const creditBalance = new Decimal(creditAccount.lastBalance.toString());
+
+    const newDebitBalance = debitBalance.plus(parsedAmount);
+    const newCreditBalance = creditBalance.minus(parsedAmount);
+
+    if (newCreditBalance.isNegative()) {
+      throw new Error(
+        `Insufficient balance in credit account ${creditAccountId}: ${creditBalance} < ${parsedAmount}`
+      );
+    }
+
+    const [debitEntry, creditEntry] = await Promise.all([
+      tx.ledgerEntry.create({
+        data: {
+          accountId: debitAccountId,
+          paymentId,
+          type: EntryType.DEBIT,
+          amount: parsedAmount.toFixed(DECIMAL_PRECISION),
+          currency,
+          balanceAfter: newDebitBalance.toFixed(DECIMAL_PRECISION),
+          description: `DEBIT: ${description}`,
+        },
+      }),
+      tx.ledgerEntry.create({
+        data: {
+          accountId: creditAccountId,
+          paymentId,
+          type: EntryType.CREDIT,
+          amount: parsedAmount.toFixed(DECIMAL_PRECISION),
+          currency,
+          balanceAfter: newCreditBalance.toFixed(DECIMAL_PRECISION),
+          description: `CREDIT: ${description}`,
+        },
+      }),
+    ]);
+
+    await Promise.all([
+      tx.account.update({
+        where: { id: debitAccountId },
+        data: { lastBalance: newDebitBalance.toFixed(DECIMAL_PRECISION) },
+      }),
+      tx.account.update({
+        where: { id: creditAccountId },
+        data: { lastBalance: newCreditBalance.toFixed(DECIMAL_PRECISION) },
+      }),
+    ]);
+
+    return { debitEntry, creditEntry };
+  });
+}
+
+export async function createLedgerEntry(data: {
   accountId: string;
   paymentId: string | null;
   type: EntryType;
   amount: string;
   currency: string;
   description: string | null;
-}
-
-const DECIMAL_PRECISION = 4;
-
-export async function createLedgerEntry(data: LedgerEntryInput) {
+}) {
   return prisma.$transaction(async (tx) => {
-    const account = await tx.account.findUniqueOrThrow({
-      where: { id: data.accountId },
-    });
+    await acquireAdvisoryLock(tx, [data.accountId]);
+
+    const account = await tx.account.findUniqueOrThrow({ where: { id: data.accountId } });
 
     const parsedAmount = new Decimal(data.amount).toDecimalPlaces(DECIMAL_PRECISION, Decimal.ROUND_HALF_UP);
-    const currentBalance = new Decimal(account.lastBalance || "0");
+    const currentBalance = new Decimal(account.lastBalance.toString());
 
     const balanceAfter =
       data.type === EntryType.DEBIT
@@ -28,7 +110,9 @@ export async function createLedgerEntry(data: LedgerEntryInput) {
         : currentBalance.minus(parsedAmount);
 
     if (balanceAfter.isNegative()) {
-      throw new Error(`Insufficient balance in account ${data.accountId}: ${currentBalance} < ${parsedAmount}`);
+      throw new Error(
+        `Insufficient balance in account ${data.accountId}: ${currentBalance} < ${parsedAmount}`
+      );
     }
 
     const entry = await tx.ledgerEntry.create({
@@ -52,57 +136,12 @@ export async function createLedgerEntry(data: LedgerEntryInput) {
   });
 }
 
-export async function doubleEntryBook({
-  debitAccountId,
-  creditAccountId,
-  paymentId,
-  amount,
-  currency,
-  description,
-}: {
-  debitAccountId: string;
-  creditAccountId: string;
-  paymentId: string | null;
-  amount: string;
-  currency: string;
-  description: string;
-}) {
-  return prisma.$transaction(async (tx) => {
-    const debitEntry = await tx.ledgerEntry.create({
-      data: {
-        accountId: debitAccountId,
-        paymentId,
-        type: EntryType.DEBIT,
-        amount,
-        currency,
-        balanceAfter: "0",
-        description: `DEBIT: ${description}`,
-      },
-    });
-
-    const creditEntry = await tx.ledgerEntry.create({
-      data: {
-        accountId: creditAccountId,
-        paymentId,
-        type: EntryType.CREDIT,
-        amount,
-        currency,
-        balanceAfter: "0",
-        description: `CREDIT: ${description}`,
-      },
-    });
-
-    return { debitEntry, creditEntry };
-  });
-}
-
 export async function getAccountBalance(accountId: string): Promise<Decimal> {
   const lastEntry = await prisma.ledgerEntry.findFirst({
     where: { accountId },
     orderBy: { createdAt: "desc" },
     select: { balanceAfter: true },
   });
-
   return new Decimal(lastEntry?.balanceAfter || "0");
 }
 

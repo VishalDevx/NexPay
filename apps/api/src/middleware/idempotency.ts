@@ -3,6 +3,9 @@ import { redis } from "../config/redis";
 import { prisma } from "../config/db";
 import crypto from "crypto";
 
+const IDEMPOTENCY_TTL = 86400;
+const LOCK_TIMEOUT = 5000;
+
 export async function idempotencyMiddleware(req: Request, res: Response, next: NextFunction) {
   if (!["POST", "PATCH"].includes(req.method)) return next();
 
@@ -12,12 +15,12 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
   const merchantId = req.merchant?.id;
   if (!merchantId) return next();
 
-  const cacheKey = `idempotency:${merchantId}:${key}`;
-  const cached = await redis.get(cacheKey);
+  const cacheKey = `idemp:${merchantId}:${key}`;
+  const lockKey = `idemp:lock:${merchantId}:${key}`;
 
+  const cached = await redis.get(cacheKey);
   if (cached) {
-    const existing = JSON.parse(cached);
-    return res.status(200).json(existing);
+    return res.status(200).json(JSON.parse(cached));
   }
 
   const existingKey = await prisma.idempotencyKey.findUnique({
@@ -25,8 +28,22 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
   });
 
   if (existingKey && existingKey.expiresAt > new Date()) {
-    await redis.set(cacheKey, JSON.stringify(existingKey.response), "EX", 86400);
+    await redis.set(cacheKey, JSON.stringify(existingKey.response), "EX", IDEMPOTENCY_TTL);
     return res.status(200).json(existingKey.response);
+  }
+
+  const lockAcquired = await redis.set(lockKey, "1", "PX", LOCK_TIMEOUT, "NX");
+  if (!lockAcquired) {
+    return res.status(409).json({
+      error: "conflict",
+      message: "Request with this idempotency key is already being processed",
+    });
+  }
+
+  const doubleCheck = await redis.get(cacheKey);
+  if (doubleCheck) {
+    await redis.del(lockKey);
+    return res.status(200).json(JSON.parse(doubleCheck));
   }
 
   const requestHash = crypto
@@ -36,33 +53,29 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
 
   req.idempotencyKey = key;
   req.idempotencyKeyHash = requestHash;
-  req.idempotencyCachedResponse = null;
 
   const originalJson = res.json.bind(res);
   res.json = function (body: any) {
     if (res.statusCode >= 200 && res.statusCode < 300 && req.idempotencyKey) {
-      const expiresAt = new Date(Date.now() + 86400000);
-      prisma.idempotencyKey
-        .create({
-          data: {
-            merchantId,
-            key: req.idempotencyKey!,
-            requestHash: req.idempotencyKeyHash!,
-            response: body,
-            expiresAt,
-          },
-        })
-        .catch((err) => console.error("Idempotency save failed:", err));
+      const data = {
+        merchantId,
+        key: req.idempotencyKey!,
+        requestHash: req.idempotencyKeyHash!,
+        response: body,
+        expiresAt: new Date(Date.now() + IDEMPOTENCY_TTL * 1000),
+      };
+
+      prisma.idempotencyKey.create({ data }).catch((err) => {
+        if (err.code !== "P2002") console.error("Idempotency save failed:", err);
+      });
 
       redis
-        .set(
-          `idempotency:${merchantId}:${req.idempotencyKey}`,
-          JSON.stringify(body),
-          "EX",
-          86400
-        )
-        .catch((err) => console.error("Redis idempotency set failed:", err));
+        .set(cacheKey, JSON.stringify(body), "EX", IDEMPOTENCY_TTL)
+        .catch(() => {});
     }
+
+    redis.del(lockKey).catch(() => {});
+
     return originalJson(body);
   };
 

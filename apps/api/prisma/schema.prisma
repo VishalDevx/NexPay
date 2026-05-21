@@ -105,6 +105,7 @@ model Merchant {
   disputes    Dispute[]
   webhooks    WebhookEndpoint[]
   idempotency IdempotencyKey[]
+  customers   Customer[]
 
   @@map("merchants")
 }
@@ -124,10 +125,43 @@ model ApiKey {
   @@map("api_keys")
 }
 
+model Customer {
+  id        String   @id @default(uuid()) @db.Uuid
+  merchantId String  @db.Uuid
+  email     String?
+  name      String?
+  phone     String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+  payments Payment[]
+
+  @@unique([merchantId, email])
+  @@map("customers")
+}
+
+model Refund {
+  id        String   @id @default(uuid()) @db.Uuid
+  paymentId String   @db.Uuid
+  amount    Decimal  @db.Decimal(20, 4)
+  reason    String?
+  status    String   @default("SUCCEEDED")
+  createdAt DateTime @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+  @@map("refunds")
+}
+
 model Payment {
   id              String        @id @default(uuid()) @db.Uuid
   merchantId      String        @db.Uuid
+  customerId      String?       @db.Uuid
   amount          Decimal       @db.Decimal(20, 4)
+  amountRefunded  Decimal       @default(0) @db.Decimal(20, 4)
   currency        String        @default("INR")
   status          PaymentStatus @default(INITIATED)
   idempotencyKey  String?
@@ -141,12 +175,14 @@ model Payment {
   updatedAt       DateTime      @updatedAt
 
   merchant      Merchant        @relation(fields: [merchantId], references: [id])
+  customer      Customer?       @relation(fields: [customerId], references: [id])
   events        PaymentEvent[]
   ledgerEntries LedgerEntry[]
   fraudEvents   FraudEvent[]
   disputes      Dispute[]
   webhooks      WebhookDelivery[]
   payoutItems   PayoutItem[]
+  refunds       Refund[]
 
   @@index([merchantId])
   @@index([idempotencyKey])
@@ -276,23 +312,20 @@ model FraudRule {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  events FraudEvent[]
-
   @@map("fraud_rules")
 }
 
 model FraudEvent {
   id        String   @id @default(uuid()) @db.Uuid
   paymentId String   @db.Uuid
-  ruleId    String?  @db.Uuid
+  ruleName  String?
   triggered Boolean
   score     Decimal  @db.Decimal(5, 2)
   reason    String?
   details   Json?
   createdAt DateTime @default(now())
 
-  payment Payment   @relation(fields: [paymentId], references: [id])
-  rule    FraudRule? @relation(fields: [ruleId], references: [id])
+  payment Payment @relation(fields: [paymentId], references: [id])
 
   @@index([paymentId])
   @@map("fraud_events")
@@ -382,4 +415,19 @@ model RateLimit {
   @@index([ip, endpoint])
   @@index([blockedUntil])
   @@map("rate_limits")
+}
+
+model LedgerAdjustment {
+  id          String   @id @default(uuid()) @db.Uuid
+  requestedBy String
+  approvedBy  String?
+  accountId   String   @db.Uuid
+  amount      Decimal  @db.Decimal(20, 4)
+  type        EntryType
+  reason      String
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("ledger_adjustments")
 }

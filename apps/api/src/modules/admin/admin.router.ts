@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../../config/db";
 import { KYCStatus, MerchantStatus, DisputeStatus } from "@prisma/client";
+import { doubleEntryBook } from "../ledger/ledger.service";
 
 const router = Router();
 
@@ -94,6 +95,64 @@ router.post("/disputes/:id/resolve", async (req: Request, res: Response) => {
   } catch (err: any) {
     res.status(422).json({ error: "resolution_failed", message: err.message });
   }
+});
+
+router.post("/ledger-adjustments", async (req: Request, res: Response) => {
+  try {
+    const { account_id, amount, type, reason } = req.body;
+
+    const adjustment = await prisma.ledgerAdjustment.create({
+      data: {
+        requestedBy: req.merchant?.id || "admin",
+        accountId: account_id,
+        amount,
+        type,
+        reason,
+        status: "PENDING",
+      },
+    });
+
+    res.status(201).json(adjustment);
+  } catch (err: any) {
+    res.status(422).json({ error: "adjustment_failed", message: err.message });
+  }
+});
+
+router.post("/ledger-adjustments/:id/approve", async (req: Request, res: Response) => {
+  try {
+    const adjustment = await prisma.ledgerAdjustment.findUnique({
+      where: { id: req.params.id },
+    });
+
+    if (!adjustment) return res.status(404).json({ error: "not_found" });
+    if (adjustment.status !== "PENDING") return res.status(409).json({ error: "already_processed" });
+
+    await doubleEntryBook({
+      debitAccountId: adjustment.type === "DEBIT" ? adjustment.accountId : "00000000-0000-0000-0000-000000000000",
+      creditAccountId: adjustment.type === "CREDIT" ? adjustment.accountId : "00000000-0000-0000-0000-000000000000",
+      paymentId: null,
+      amount: adjustment.amount.toString(),
+      currency: "USD",
+      description: `Ledger adjustment: ${adjustment.reason}`,
+    });
+
+    const updated = await prisma.ledgerAdjustment.update({
+      where: { id: req.params.id },
+      data: { status: "APPROVED", approvedBy: req.merchant?.id || "admin" },
+    });
+
+    res.json(updated);
+  } catch (err: any) {
+    res.status(422).json({ error: "approval_failed", message: err.message });
+  }
+});
+
+router.get("/ledger-adjustments", async (req: Request, res: Response) => {
+  const adjustments = await prisma.ledgerAdjustment.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+  res.json({ data: adjustments });
 });
 
 router.get("/health", async (req: Request, res: Response) => {

@@ -4,6 +4,7 @@ import { validateTransition } from "./payment.state";
 
 interface CreatePaymentInput {
   merchantId: string;
+  customerId?: string;
   amount: string;
   currency: string;
   paymentMethod: any;
@@ -25,6 +26,7 @@ export const paymentRepo = {
       const payment = await tx.payment.create({
         data: {
           merchantId: data.merchantId,
+          customerId: data.customerId,
           amount: data.amount,
           currency: data.currency,
           status: PaymentStatus.INITIATED,
@@ -32,6 +34,7 @@ export const paymentRepo = {
           metadata: data.metadata,
           description: data.description,
           idempotencyKey: data.idempotencyKey,
+          amountRefunded: "0",
         },
       });
 
@@ -56,8 +59,7 @@ export const paymentRepo = {
       });
 
       if (!validateTransition(payment.status, data.toStatus)) {
-        const error = `Invalid transition: ${payment.status} -> ${data.toStatus}`;
-        throw new Error(error);
+        throw new Error(`Invalid transition: ${payment.status} -> ${data.toStatus}`);
       }
 
       const updated = await tx.payment.update({
@@ -86,16 +88,28 @@ export const paymentRepo = {
   async findById(id: string) {
     return prisma.payment.findUnique({
       where: { id },
-      include: { events: { orderBy: { createdAt: "desc" } } },
+      include: {
+        events: { orderBy: { createdAt: "desc" } },
+        refunds: true,
+        customer: true,
+      },
     });
   },
 
-  async findByMerchant(merchantId: string, filters: { status?: PaymentStatus; limit?: number; offset?: number }) {
+  async findByMerchant(
+    merchantId: string,
+    filters: { status?: PaymentStatus; customerId?: string; limit?: number; offset?: number }
+  ) {
     return prisma.payment.findMany({
-      where: { merchantId, ...(filters.status ? { status: filters.status } : {}) },
+      where: {
+        merchantId,
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.customerId ? { customerId: filters.customerId } : {}),
+      },
       orderBy: { createdAt: "desc" },
       take: filters.limit || 50,
       skip: filters.offset || 0,
+      include: { customer: true, refunds: true },
     });
   },
 };

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { prisma } from "../../config/db";
 import { paymentService } from "./payment.service";
 import { paymentRepo } from "./payment.repo";
 
@@ -6,7 +7,7 @@ const router = Router();
 
 router.post("/charges", async (req: Request, res: Response) => {
   try {
-    const { amount, currency, payment_method, metadata, description } = req.body;
+    const { amount, currency, customer_id, payment_method, metadata, description } = req.body;
 
     if (!amount || !payment_method) {
       return res.status(400).json({ error: "missing_fields", message: "amount and payment_method required" });
@@ -14,6 +15,7 @@ router.post("/charges", async (req: Request, res: Response) => {
 
     const payment = await paymentService.charge({
       merchantId: req.merchant!.id,
+      customerId: customer_id,
       amount,
       currency: currency || "INR",
       paymentMethod: payment_method,
@@ -25,7 +27,12 @@ router.post("/charges", async (req: Request, res: Response) => {
       sandboxScenario: req.sandboxScenario,
     });
 
-    res.status(201).json({ id: payment?.id, status: payment?.status, amount: payment?.amount, currency: payment?.currency });
+    res.status(201).json({
+      id: payment?.id,
+      status: payment?.status,
+      amount: payment?.amount,
+      currency: payment?.currency,
+    });
   } catch (err: any) {
     console.error("Charge error:", err);
     res.status(422).json({ error: "charge_failed", message: err.message });
@@ -41,10 +48,19 @@ router.post("/charges/:id/capture", async (req: Request, res: Response) => {
   }
 });
 
+router.post("/charges/:id/cancel", async (req: Request, res: Response) => {
+  try {
+    const payment = await paymentService.cancel(req.params.id, req.body.reason);
+    res.json({ id: payment.id, status: payment.status });
+  } catch (err: any) {
+    res.status(422).json({ error: "cancel_failed", message: err.message });
+  }
+});
+
 router.post("/charges/:id/refund", async (req: Request, res: Response) => {
   try {
-    const payment = await paymentService.refund(req.params.id, req.body.reason);
-    res.json({ id: payment.id, status: payment.status });
+    const refund = await paymentService.refund(req.params.id, req.body.amount, req.body.reason);
+    res.status(201).json(refund);
   } catch (err: any) {
     res.status(422).json({ error: "refund_failed", message: err.message });
   }
@@ -60,11 +76,37 @@ router.get("/charges/:id", async (req: Request, res: Response) => {
   }
 });
 
+router.get("/charges/:id/events", async (req: Request, res: Response) => {
+  try {
+    const events = await prisma.paymentEvent.findMany({
+      where: { paymentId: req.params.id },
+      orderBy: { createdAt: "asc" },
+    });
+    res.json({ data: events });
+  } catch (err: any) {
+    res.status(500).json({ error: "server_error", message: err.message });
+  }
+});
+
+router.get("/charges/:id/ledger", async (req: Request, res: Response) => {
+  try {
+    const entries = await prisma.ledgerEntry.findMany({
+      where: { paymentId: req.params.id },
+      include: { account: true },
+      orderBy: { createdAt: "asc" },
+    });
+    res.json({ data: entries });
+  } catch (err: any) {
+    res.status(500).json({ error: "server_error", message: err.message });
+  }
+});
+
 router.get("/charges", async (req: Request, res: Response) => {
   try {
-    const { status, limit, offset } = req.query;
+    const { status, customer_id, limit, offset } = req.query;
     const payments = await paymentRepo.findByMerchant(req.merchant!.id, {
       status: status as any,
+      customerId: customer_id as string,
       limit: Number(limit) || 50,
       offset: Number(offset) || 0,
     });

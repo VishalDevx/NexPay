@@ -39,20 +39,20 @@ export const fraudEngine = {
       if (triggered) {
         const result: FraudRuleResult = {
           ruleId: rule.id,
-          ruleName: rule.name,
-          triggered: true,
-          score: rule.scoreWeight,
-          reason: rule.reason,
-        };
-        results.push(result);
-        totalScore += rule.scoreWeight;
-
-        await prisma.fraudEvent.create({
-          data: {
-            paymentId: input.paymentId,
-            ruleId: rule.id,
+            ruleName: rule.name,
             triggered: true,
             score: rule.scoreWeight,
+            reason: rule.reason,
+          };
+          results.push(result);
+          totalScore += rule.scoreWeight;
+
+          await prisma.fraudEvent.create({
+            data: {
+              paymentId: input.paymentId,
+              ruleName: rule.name,
+              triggered: true,
+              score: rule.scoreWeight,
             reason: rule.reason,
             details: { metadata: input.metadata },
           },
