@@ -46,13 +46,13 @@ router.post("/", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "missing_fields", message: "customerName and lineItems required" });
     }
 
-    const subtotal = lineItems.reduce((sum: number, item: any) => {
+    const rawSubtotal = lineItems.reduce((sum: number, item: any) => {
       return sum + Number(item.quantity) * Number(item.unitPrice);
     }, 0);
-
+    const subtotal = new Prisma.Decimal(rawSubtotal);
     const tax = Number(taxRate) || 0;
-    const taxAmount = subtotal * (tax / 100);
-    const total = subtotal + taxAmount;
+    const taxAmount = new Prisma.Decimal(rawSubtotal * (tax / 100));
+    const total = subtotal.add(taxAmount);
 
     const count = await prisma.invoice.count();
     const now = new Date();
