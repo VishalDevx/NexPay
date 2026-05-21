@@ -105,6 +105,9 @@ model Merchant {
   recoveryEmail        String?
   passwordResetToken   String?
   passwordResetExpires DateTime?
+  payoutSchedule       Json?
+  settingsJson         Json?
+  brandingJson         Json?
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
 
@@ -117,6 +120,13 @@ model Merchant {
   webhooks    WebhookEndpoint[]
   idempotency IdempotencyKey[]
   customers   Customer[]
+  bankAccounts     BankAccount[]
+  invoices         Invoice[]
+  teamMembers      TeamMember[]
+  uploads          Upload[]
+  sessions         MerchantSession[]
+  notificationPrefs NotificationPreference[]
+  subMerchants     SubMerchant[]
 
   @@map("merchants")
 }
@@ -397,6 +407,143 @@ model WebhookDelivery {
   @@index([status])
   @@index([nextRetryAt])
   @@map("webhook_deliveries")
+}
+
+model BankAccount {
+  id               String   @id @default(uuid()) @db.Uuid
+  merchantId       String   @db.Uuid
+  accountNumber    String
+  ifsc             String
+  bankName         String?
+  accountHolder    String?
+  isPrimary        Boolean  @default(false)
+  verified         Boolean  @default(false)
+  verificationRef  String?
+  lastUsedAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@index([merchantId])
+  @@map("bank_accounts")
+}
+
+model TeamMember {
+  id           String   @id @default(uuid()) @db.Uuid
+  merchantId   String   @db.Uuid
+  email        String
+  name         String?
+  role         String   @default("DEVELOPER")
+  status       String   @default("ACTIVE")
+  invitedAt    DateTime?
+  expiresAt    DateTime?
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@unique([merchantId, email])
+  @@map("team_members")
+}
+
+model MerchantSession {
+  id           String   @id @default(uuid()) @db.Uuid
+  merchantId   String   @db.Uuid
+  token        String   @unique
+  deviceInfo   String?
+  ip           String?
+  isCurrent    Boolean  @default(true)
+  lastUsedAt   DateTime @default(now())
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@index([merchantId])
+  @@index([token])
+  @@map("merchant_sessions")
+}
+
+model Invoice {
+  id            String   @id @default(uuid()) @db.Uuid
+  merchantId    String   @db.Uuid
+  invoiceNumber String   @unique
+  customerName  String
+  customerEmail String?
+  customerGstin String?
+  status        String   @default("DRAFT")
+  subtotal      Decimal  @db.Decimal(20, 4)
+  taxAmount     Decimal  @default(0) @db.Decimal(20, 4)
+  total         Decimal  @db.Decimal(20, 4)
+  currency      String   @default("INR")
+  dueDate       DateTime?
+  issuedDate    DateTime?
+  paidAt        DateTime?
+  notes         String?
+  lineItems     Json     @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@index([merchantId])
+  @@index([status])
+  @@map("invoices")
+}
+
+model Upload {
+  id         String   @id @default(uuid()) @db.Uuid
+  merchantId String   @db.Uuid
+  fileName   String
+  fileType   String
+  fileSize   Int
+  storageKey String
+  category   String   @default("KYC")
+  refId      String?
+  refType    String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@index([merchantId])
+  @@index([refId, refType])
+  @@map("uploads")
+}
+
+model SubMerchant {
+  id           String   @id @default(uuid()) @db.Uuid
+  parentId     String   @db.Uuid
+  name         String
+  email        String
+  commissionPct Decimal @default(0) @db.Decimal(5, 2)
+  status       String   @default("ACTIVE")
+  apiKeyPrefix String?
+  gmv          Decimal  @default(0) @db.Decimal(20, 4)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  parent Merchant @relation(fields: [parentId], references: [id])
+
+  @@index([parentId])
+  @@map("sub_merchants")
+}
+
+model NotificationPreference {
+  id         String  @id @default(uuid()) @db.Uuid
+  merchantId String  @db.Uuid
+  channel    String
+  event      String
+  enabled    Boolean @default(true)
+  slackWebhook String?
+  slackChannel String?
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@unique([merchantId, channel, event])
+  @@map("notification_preferences")
 }
 
 model IdempotencyKey {
