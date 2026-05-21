@@ -36,7 +36,7 @@ router.post("/", async (req: Request, res: Response) => {
         category,
         refId: refId || null,
         refType: refType || null,
-        metadata: process.env.NODE_ENV === "production" ? null : { base64: fileData },
+        metadata: process.env.NODE_ENV === "production" ? undefined : { base64: fileData },
       },
     });
 
