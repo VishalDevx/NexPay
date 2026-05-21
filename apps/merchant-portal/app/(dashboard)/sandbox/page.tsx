@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Copy, Check, Beaker, AlertTriangle, RefreshCw, Zap, CreditCard, Code } from "lucide-react";
+import api from "@/lib/api";
 
 const testCards = [
   { number: "4242 4242 4242 4242", scenario: "Success", label: "Payment succeeds", badge: "success" },
@@ -35,8 +36,20 @@ export default function SandboxPage() {
 
   const simulateEvent = async (event: string) => {
     setSimulating(event);
-    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      await api.post<any>("/sandbox/events", { event });
+    } catch (err) {
+      console.error("Event simulation error:", err);
+    }
     setSimulating(null);
+  };
+
+  const resetSandbox = async () => {
+    try {
+      await api.delete("/sandbox/reset");
+    } catch (err) {
+      console.error("Reset error:", err);
+    }
   };
 
   return (
@@ -146,7 +159,7 @@ export default function SandboxPage() {
                   </div>
                 </div>
               </div>
-              <Button variant="outline" className="w-full text-red-600 border-red-200 hover:bg-red-50">
+              <Button variant="outline" className="w-full text-red-600 border-red-200 hover:bg-red-50" onClick={resetSandbox}>
                 <RefreshCw className="w-4 h-4 mr-1" /> Reset All Sandbox Data
               </Button>
             </CardContent>

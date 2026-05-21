@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,15 +9,38 @@ import {
   Shield, Lock, FileSearch, Globe, FileText, Bug,
   Check, AlertTriangle, Download, ExternalLink,
 } from "lucide-react";
+import api from "@/lib/api";
 
-const complianceReports = [
-  { jurisdiction: "India (TDS)", report: "TDS Deduction Summary Q1 2026", status: "ready", period: "Jan-Mar 2026" },
-  { jurisdiction: "EU (VAT)", report: "VAT Summary Q1 2026", status: "generating", period: "Jan-Mar 2026" },
-  { jurisdiction: "US (IRS)", report: "1099-K 2025", status: "ready", period: "Calendar Year 2025" },
-];
+function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("nexpay_token");
+}
 
 export default function CompliancePage() {
   const [activeTab, setActiveTab] = useState("overview");
+  const [complianceSummary, setComplianceSummary] = useState<any>(null);
+  const [reports, setReports] = useState<any[]>([]);
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const [statusRes, reportsRes] = await Promise.all([
+          api.get<any>("/compliance/status"),
+          api.get<any>("/compliance/reports"),
+        ]);
+        setComplianceSummary(statusRes.data || statusRes);
+        setReports(reportsRes.data || []);
+      } catch (err) {
+        console.error("Compliance fetch error:", err);
+      }
+    }
+    fetchData();
+  }, []);
+
+  const handleDownload = (id: string) => {
+    const token = getToken();
+    window.open(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/compliance/reports/${id}/download?token=${token}`);
+  };
 
   return (
     <div className="space-y-6">
@@ -31,8 +54,8 @@ export default function CompliancePage() {
           <CardContent className="p-5 flex items-center gap-4">
             <Shield className="w-8 h-8 text-emerald-600" />
             <div>
-              <p className="font-semibold">PCI-DSS Level 1</p>
-              <p className="text-xs text-emerald-600">Compliant</p>
+              <p className="font-semibold">{complianceSummary?.pciDss?.label ?? "PCI-DSS Level 1"}</p>
+              <p className="text-xs text-emerald-600">{complianceSummary?.pciDss?.status ?? "Compliant"}</p>
             </div>
           </CardContent>
         </Card>
@@ -40,8 +63,8 @@ export default function CompliancePage() {
           <CardContent className="p-5 flex items-center gap-4">
             <Lock className="w-8 h-8 text-blue-600" />
             <div>
-              <p className="font-semibold">AES-256 Encryption</p>
-              <p className="text-xs text-blue-600">At rest + TLS 1.3</p>
+              <p className="font-semibold">{complianceSummary?.encryption?.label ?? "AES-256 Encryption"}</p>
+              <p className="text-xs text-blue-600">{complianceSummary?.encryption?.status ?? "At rest + TLS 1.3"}</p>
             </div>
           </CardContent>
         </Card>
@@ -49,8 +72,8 @@ export default function CompliancePage() {
           <CardContent className="p-5 flex items-center gap-4">
             <Globe className="w-8 h-8 text-amber-600" />
             <div>
-              <p className="font-semibold">GDPR Compliant</p>
-              <p className="text-xs text-amber-600">DPA available</p>
+              <p className="font-semibold">{complianceSummary?.gdpr?.label ?? "GDPR Compliant"}</p>
+              <p className="text-xs text-amber-600">{complianceSummary?.gdpr?.status ?? "DPA available"}</p>
             </div>
           </CardContent>
         </Card>
@@ -58,8 +81,8 @@ export default function CompliancePage() {
           <CardContent className="p-5 flex items-center gap-4">
             <FileSearch className="w-8 h-8 text-purple-600" />
             <div>
-              <p className="font-semibold">AML/KYT Screening</p>
-              <p className="text-xs text-purple-600">OFAC + UN sanctions</p>
+              <p className="font-semibold">{complianceSummary?.amlKyt?.label ?? "AML/KYT Screening"}</p>
+              <p className="text-xs text-purple-600">{complianceSummary?.amlKyt?.status ?? "OFAC + UN sanctions"}</p>
             </div>
           </CardContent>
         </Card>
@@ -79,10 +102,10 @@ export default function CompliancePage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {complianceReports.map((r) => (
-                  <TableRow key={r.report}>
-                    <TableCell className="font-medium">{r.jurisdiction}</TableCell>
-                    <TableCell className="text-sm">{r.report}</TableCell>
+                {reports.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="font-medium">{r.type}</TableCell>
+                    <TableCell className="text-sm">{r.report || r.type}</TableCell>
                     <TableCell>
                       <Badge variant={r.status === "ready" ? "success" : "warning"}>
                         {r.status === "ready" ? "Ready" : "Generating"}
@@ -90,7 +113,9 @@ export default function CompliancePage() {
                     </TableCell>
                     <TableCell>
                       {r.status === "ready" && (
-                        <Button variant="ghost" size="sm"><Download className="w-4 h-4" /></Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleDownload(r.id)}>
+                          <Download className="w-4 h-4" />
+                        </Button>
                       )}
                     </TableCell>
                   </TableRow>

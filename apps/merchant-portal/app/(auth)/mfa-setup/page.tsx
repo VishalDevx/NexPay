@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { QRCodeSVG } from "qrcode.react";
 import { Loader2, Check, Copy, Smartphone, Shield, ArrowLeft, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -151,13 +152,7 @@ export default function MfaSetupPage() {
             </div>
             <div className="flex justify-center mb-6">
               <div className="bg-white p-4 rounded-xl">
-                <div className="w-48 h-48 bg-gray-200 flex items-center justify-center">
-                  <img
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(uri)}`}
-                    alt="TOTP QR Code"
-                    className="w-48 h-48"
-                  />
-                </div>
+                <QRCodeSVG value={uri || "otpauth://"} size={192} />
               </div>
             </div>
             <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-3 mb-6">

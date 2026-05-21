@@ -12,6 +12,7 @@ import {
   Search, Download, Filter, X, ChevronDown, ChevronUp,
   AlertTriangle, RefreshCw, FileText, Eye,
 } from "lucide-react";
+import { api } from "@/lib/api";
 
 const statuses = ["ALL", "INITIATED", "PROCESSING", "AUTHORIZED", "CAPTURED", "SETTLED", "FAILED", "REFUNDED", "DISPUTED"];
 const currencies = ["ALL", "USD", "INR", "EUR", "GBP"];
@@ -19,6 +20,7 @@ const currencies = ["ALL", "USD", "INR", "EUR", "GBP"];
 export default function TransactionsPage() {
   const [payments, setPayments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [currencyFilter, setCurrencyFilter] = useState("ALL");
@@ -29,37 +31,52 @@ export default function TransactionsPage() {
   const [showRefundModal, setShowRefundModal] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("nexpay_token");
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/payments/charges`, {
-      headers: { "x-api-key": token || "" },
-    })
-      .then((r) => r.json())
-      .then((data) => { setPayments(data.data || []); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, []);
+    async function fetchPayments() {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams();
+        if (statusFilter !== "ALL") params.set("status", statusFilter);
+        if (currencyFilter !== "ALL") params.set("currency", currencyFilter);
+        if (search) params.set("search", search);
+        const res = await api.get<any>("/payments?" + params.toString());
+        setPayments(res.data || []);
+      } catch (err) {
+        console.error("Failed to fetch payments:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchPayments();
+  }, [statusFilter, currencyFilter, search]);
 
-  const filtered = payments.filter((p) => {
-    if (statusFilter !== "ALL" && p.status !== statusFilter) return false;
-    if (currencyFilter !== "ALL" && p.currency !== currencyFilter) return false;
-    if (search && !p.id?.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
+  const openDetail = async (payment: any) => {
+    setSelectedPayment(payment);
+    setShowDrawer(true);
+    setDetailLoading(true);
+    try {
+      const res = await api.get<any>("/payments/" + payment.id);
+      setSelectedPayment(res.data);
+    } catch (err) {
+      console.error("Failed to fetch payment detail:", err);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   const handleRefund = async () => {
-    const token = localStorage.getItem("nexpay_token");
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/payments/charges/${selectedPayment.id}/refund`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": token || "" },
-      body: JSON.stringify({ amount: parseFloat(refundAmount), reason: refundReason }),
-    });
-    setShowRefundModal(false);
-    setRefundAmount("");
-    setRefundReason("");
+    try {
+      await api.post<any>("/payments/" + selectedPayment.id + "/refund", { amount: parseFloat(refundAmount), reason: refundReason });
+      setShowRefundModal(false);
+      setRefundAmount("");
+      setRefundReason("");
+    } catch (err) {
+      console.error("Refund failed:", err);
+    }
   };
 
   const exportData = (format: "csv" | "xlsx") => {
     const headers = ["ID", "Amount", "Currency", "Status", "Customer", "Fraud Score", "Date"];
-    const rows = filtered.map((p) => [
+    const rows = payments.map((p) => [
       p.id, p.amount, p.currency, p.status, p.customer?.email || "—", p.fraudScore || "—",
       new Date(p.createdAt).toISOString(),
     ]);
@@ -146,9 +163,9 @@ export default function TransactionsPage() {
                     ))}
                   </TableRow>
                 ))
-              ) : filtered.length > 0 ? (
-                filtered.map((p: any) => (
-                  <TableRow key={p.id} className="cursor-pointer hover:bg-gray-50" onClick={() => { setSelectedPayment(p); setShowDrawer(true); }}>
+              ) : payments.length > 0 ? (
+                payments.map((p: any) => (
+                  <TableRow key={p.id} className="cursor-pointer hover:bg-gray-50" onClick={() => openDetail(p)}>
                     <TableCell className="font-mono text-xs">{p.id?.slice(0, 12)}...</TableCell>
                     <TableCell className="font-medium">{Number(p.amount).toLocaleString("en-US", { style: "currency", currency: p.currency || "USD" })}</TableCell>
                     <TableCell>{p.currency || "USD"}</TableCell>
@@ -163,7 +180,7 @@ export default function TransactionsPage() {
                     <TableCell className="text-sm text-gray-600">{p.customer?.email || "—"}</TableCell>
                     <TableCell className="text-gray-500 text-sm">{new Date(p.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</TableCell>
                     <TableCell>
-                      <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setSelectedPayment(p); setShowDrawer(true); }}>
+                      <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); openDetail(p); }}>
                         <Eye className="w-4 h-4" />
                       </Button>
                     </TableCell>
@@ -189,87 +206,95 @@ export default function TransactionsPage() {
                 </button>
               </div>
 
-              <div className="space-y-6">
-                <div>
-                  <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-3">State Machine</p>
-                  <div className="flex items-center gap-1">
-                    {stateMachineSteps.map((step, i) => {
-                      const currentIdx = stateMachineSteps.indexOf(selectedPayment.status);
-                      const isActive = i <= currentIdx;
-                      const isCurrent = i === currentIdx;
-                      return (
-                        <div key={step} className="flex items-center flex-1">
-                          <div className={`w-2.5 h-2.5 rounded-full ${isActive ? "bg-blue-500" : "bg-gray-200"}`} />
-                          {i < stateMachineSteps.length - 1 && (
-                            <div className={`flex-1 h-0.5 ${isActive && !isCurrent ? "bg-blue-300" : "bg-gray-200"}`} />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    {stateMachineSteps.map((s) => (
-                      <span key={s} className={selectedPayment.status === s ? "text-blue-600 font-medium" : ""}>
-                        {s.charAt(0) + s.slice(1).toLowerCase()}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  {[
-                    { label: "Payment ID", value: selectedPayment.id },
-                    { label: "Amount", value: `$${Number(selectedPayment.amount).toFixed(2)}` },
-                    { label: "Currency", value: selectedPayment.currency || "USD" },
-                    { label: "Status", value: selectedPayment.status },
-                    { label: "Fraud Score", value: selectedPayment.fraudScore ? `${Number(selectedPayment.fraudScore).toFixed(0)}/100` : "—" },
-                    { label: "Description", value: selectedPayment.description || "—" },
-                    { label: "Created", value: new Date(selectedPayment.createdAt).toLocaleString() },
-                    { label: "Captured", value: selectedPayment.capturedAt ? new Date(selectedPayment.capturedAt).toLocaleString() : "—" },
-                  ].map((f) => (
-                    <div key={f.label}>
-                      <p className="text-xs text-gray-500">{f.label}</p>
-                      <p className="text-sm font-medium break-all">{f.value}</p>
-                    </div>
+              {detailLoading ? (
+                <div className="space-y-4">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <Skeleton key={i} className="h-6 w-full" />
                   ))}
                 </div>
-
-                <div>
-                  <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-2">Ledger Entries</p>
-                  <div className="bg-gray-50 rounded-lg p-3 space-y-2">
-                    <div className="flex justify-between text-sm"><span className="text-emerald-600 font-medium">+ Credit</span><span>$249.00</span></div>
-                    <div className="flex justify-between text-sm"><span className="text-red-600 font-medium">- Debit</span><span>$249.00</span></div>
-                  </div>
-                </div>
-
-                {selectedPayment.fraudEvents && selectedPayment.fraudEvents.length > 0 && (
+              ) : (
+                <div className="space-y-6">
                   <div>
-                    <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-2">Fraud Breakdown</p>
-                    <div className="space-y-2">
-                      {selectedPayment.fraudEvents.map((fe: any, i: number) => (
-                        <div key={i} className="bg-gray-50 rounded-lg p-3 flex justify-between text-sm">
-                          <span>{fe.ruleName || "Unknown rule"}</span>
-                          <span className="font-medium">{Number(fe.score).toFixed(0)} pts</span>
-                        </div>
+                    <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-3">State Machine</p>
+                    <div className="flex items-center gap-1">
+                      {stateMachineSteps.map((step, i) => {
+                        const currentIdx = stateMachineSteps.indexOf(selectedPayment.status);
+                        const isActive = i <= currentIdx;
+                        const isCurrent = i === currentIdx;
+                        return (
+                          <div key={step} className="flex items-center flex-1">
+                            <div className={`w-2.5 h-2.5 rounded-full ${isActive ? "bg-blue-500" : "bg-gray-200"}`} />
+                            {i < stateMachineSteps.length - 1 && (
+                              <div className={`flex-1 h-0.5 ${isActive && !isCurrent ? "bg-blue-300" : "bg-gray-200"}`} />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-500 mt-1">
+                      {stateMachineSteps.map((s) => (
+                        <span key={s} className={selectedPayment.status === s ? "text-blue-600 font-medium" : ""}>
+                          {s.charAt(0) + s.slice(1).toLowerCase()}
+                        </span>
                       ))}
                     </div>
                   </div>
-                )}
 
-                <div className="flex gap-3">
-                  {(selectedPayment.status === "CAPTURED" || selectedPayment.status === "SETTLED") && (
-                    <Button
-                      className="flex-1 bg-amber-600 hover:bg-amber-500 text-white"
-                      onClick={() => setShowRefundModal(true)}
-                    >
-                      <RefreshCw className="w-4 h-4 mr-1" /> Refund
-                    </Button>
+                  <div className="grid grid-cols-2 gap-4">
+                    {[
+                      { label: "Payment ID", value: selectedPayment.id },
+                      { label: "Amount", value: `$${Number(selectedPayment.amount).toFixed(2)}` },
+                      { label: "Currency", value: selectedPayment.currency || "USD" },
+                      { label: "Status", value: selectedPayment.status },
+                      { label: "Fraud Score", value: selectedPayment.fraudScore ? `${Number(selectedPayment.fraudScore).toFixed(0)}/100` : "—" },
+                      { label: "Description", value: selectedPayment.description || "—" },
+                      { label: "Created", value: new Date(selectedPayment.createdAt).toLocaleString() },
+                      { label: "Captured", value: selectedPayment.capturedAt ? new Date(selectedPayment.capturedAt).toLocaleString() : "—" },
+                    ].map((f) => (
+                      <div key={f.label}>
+                        <p className="text-xs text-gray-500">{f.label}</p>
+                        <p className="text-sm font-medium break-all">{f.value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-2">Ledger Entries</p>
+                    <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                      <div className="flex justify-between text-sm"><span className="text-emerald-600 font-medium">+ Credit</span><span>$249.00</span></div>
+                      <div className="flex justify-between text-sm"><span className="text-red-600 font-medium">- Debit</span><span>$249.00</span></div>
+                    </div>
+                  </div>
+
+                  {selectedPayment.fraudEvents && selectedPayment.fraudEvents.length > 0 && (
+                    <div>
+                      <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-2">Fraud Breakdown</p>
+                      <div className="space-y-2">
+                        {selectedPayment.fraudEvents.map((fe: any, i: number) => (
+                          <div key={i} className="bg-gray-50 rounded-lg p-3 flex justify-between text-sm">
+                            <span>{fe.ruleName || "Unknown rule"}</span>
+                            <span className="font-medium">{Number(fe.score).toFixed(0)} pts</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
-                  <Button variant="outline" className="flex-1">
-                    <FileText className="w-4 h-4 mr-1" /> View in Ledger
-                  </Button>
+
+                  <div className="flex gap-3">
+                    {(selectedPayment.status === "CAPTURED" || selectedPayment.status === "SETTLED") && (
+                      <Button
+                        className="flex-1 bg-amber-600 hover:bg-amber-500 text-white"
+                        onClick={() => setShowRefundModal(true)}
+                      >
+                        <RefreshCw className="w-4 h-4 mr-1" /> Refund
+                      </Button>
+                    )}
+                    <Button variant="outline" className="flex-1">
+                      <FileText className="w-4 h-4 mr-1" /> View in Ledger
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         </>

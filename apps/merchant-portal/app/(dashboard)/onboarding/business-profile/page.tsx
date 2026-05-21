@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import api from "@/lib/api";
 import Link from "next/link";
 import { ArrowLeft, Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -39,11 +40,25 @@ export default function BusinessProfilePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    // Simulate save
-    await new Promise((r) => setTimeout(r, 1000));
-    setLoading(false);
-    setSaved(true);
-    setTimeout(() => router.push("/onboarding/documents"), 1000);
+    try {
+      await api.put("/merchants/profile", {
+        legalName: form.legalName,
+        registrationNumber: form.registrationNumber,
+        address: form.address,
+        city: form.city,
+        state: form.state,
+        zip: form.zip,
+        website: form.website,
+        mccCode: form.mccCode,
+        expectedMonthlyVolume: form.expectedMonthlyVolume,
+      });
+      setLoading(false);
+      setSaved(true);
+      setTimeout(() => router.push("/onboarding/documents"), 1000);
+    } catch (e) {
+      console.error(e);
+      setLoading(false);
+    }
   };
 
   return (

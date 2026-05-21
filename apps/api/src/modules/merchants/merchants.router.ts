@@ -340,6 +340,28 @@ authRouter.get("/me", async (req: Request, res: Response) => {
   res.json({ merchant });
 });
 
+authRouter.patch("/me", async (req: Request, res: Response) => {
+  try {
+    const allowedFields = ["name", "country", "businessType", "recoveryEmail", "baseCurrency", "payoutSchedule", "settingsJson", "brandingJson"];
+    const updates: Record<string, any> = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "no_fields", message: "No valid fields to update" });
+    }
+    const merchant = await prisma.merchant.update({
+      where: { id: req.merchant!.id },
+      data: updates,
+    });
+    res.json({ updated: true, merchant });
+  } catch (err: any) {
+    res.status(422).json({ error: "update_failed", message: err.message });
+  }
+});
+
 authRouter.get("/profile", async (req: Request, res: Response) => {
   const merchant = await prisma.merchant.findUnique({
     where: { id: req.merchant!.id },

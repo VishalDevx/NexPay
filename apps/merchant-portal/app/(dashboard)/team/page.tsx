@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,34 +11,154 @@ import {
   Check, X, Copy, Loader2, Settings,
 } from "lucide-react";
 
-const mockTeamMembers = [
-  { id: "u1", name: "Alice Johnson", email: "alice@acme.com", role: "Owner", status: "active", lastActive: "2 min ago" },
-  { id: "u2", name: "Bob Smith", email: "bob@acme.com", role: "Admin", status: "active", lastActive: "1 hour ago" },
-  { id: "u3", name: "Carol Davis", email: "carol@acme.com", role: "Developer", status: "active", lastActive: "3 hours ago" },
-  { id: "u4", name: "David Wilson", email: "david@acme.com", role: "Finance", status: "active", lastActive: "1 day ago" },
-  { id: "u5", name: "Eve Brown", email: "eve@acme.com", role: "Read-only", status: "invited", lastActive: "—" },
-];
-
-const mockSubMerchants = [
-  { id: "sm1", name: "Seller One", email: "seller1@marketplace.com", status: "active", volume: "$45,200", commission: "5%" },
-  { id: "sm2", name: "Seller Two", email: "seller2@marketplace.com", status: "pending", volume: "$12,800", commission: "3%" },
-  { id: "sm3", name: "Seller Three", email: "seller3@marketplace.com", status: "active", volume: "$89,100", commission: "7%" },
-];
-
-const mockSessions = [
-  { id: "s1", device: "Chrome on macOS", ip: "203.0.113.1", lastActive: "Now", current: true },
-  { id: "s2", device: "Safari on iOS", ip: "198.51.100.5", lastActive: "2 hours ago", current: false },
-  { id: "s3", device: "Firefox on Windows", ip: "192.0.2.10", lastActive: "1 day ago", current: false },
-];
-
 const roles = ["Owner", "Admin", "Developer", "Finance", "Read-only"];
 
 export default function TeamPage() {
   const [activeTab, setActiveTab] = useState<"team" | "submerchants" | "sessions">("team");
+  const [loading, setLoading] = useState(true);
+
+  const [members, setMembers] = useState<any[]>([]);
+  const [subMerchants, setSubMerchants] = useState<any[]>([]);
+  const [sessions, setSessions] = useState<any[]>([]);
+
   const [showInvite, setShowInvite] = useState(false);
+  const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("Developer");
+  const [inviting, setInviting] = useState(false);
+
   const [showCreateSub, setShowCreateSub] = useState(false);
+  const [subName, setSubName] = useState("");
+  const [subEmail, setSubEmail] = useState("");
+  const [subCommission, setSubCommission] = useState("");
+  const [creatingSub, setCreatingSub] = useState(false);
+
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [revokingAll, setRevokingAll] = useState(false);
+  const [updatingRole, setUpdatingRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const [teamRes, sessionsRes, subsRes] = await Promise.all([
+          api.get<any>("/team"),
+          api.get<any>("/sessions"),
+          api.get<any>("/marketplace/sub-merchants"),
+        ]);
+        setMembers(teamRes);
+        setSessions(sessionsRes);
+        setSubMerchants(subsRes);
+      } catch (err) {
+        console.error("Team fetch error:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchData();
+  }, []);
+
+  const handleInvite = async () => {
+    if (!inviteEmail) return;
+    setInviting(true);
+    try {
+      const newMember = await api.post<any>("/team/invite", { email: inviteEmail, name: inviteName, role: inviteRole });
+      setMembers((prev) => [...prev, newMember]);
+      setShowInvite(false);
+      setInviteEmail("");
+      setInviteName("");
+      setInviteRole("Developer");
+    } catch (err) {
+      console.error("Invite error:", err);
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  const handleRemoveMember = async (id: string) => {
+    setRemovingId(id);
+    try {
+      await api.delete("/team/" + id);
+      setMembers((prev) => prev.filter((m) => m.id !== id));
+    } catch (err) {
+      console.error("Remove member error:", err);
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  const handleResendInvite = async (id: string) => {
+    try {
+      await api.post("/team/" + id + "/resend-invite");
+    } catch (err) {
+      console.error("Resend invite error:", err);
+    }
+  };
+
+  const handleRoleChange = async (id: string, role: string) => {
+    setUpdatingRole(id);
+    try {
+      await api.patch("/team/" + id, { role });
+      setMembers((prev) => prev.map((m) => (m.id === id ? { ...m, role } : m)));
+    } catch (err) {
+      console.error("Role update error:", err);
+    } finally {
+      setUpdatingRole(null);
+    }
+  };
+
+  const handleRevokeSession = async (id: string) => {
+    setRevokingId(id);
+    try {
+      await api.delete("/sessions/" + id);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      console.error("Revoke session error:", err);
+    } finally {
+      setRevokingId(null);
+    }
+  };
+
+  const handleRevokeAllOthers = async () => {
+    setRevokingAll(true);
+    try {
+      await api.delete("/sessions");
+      setSessions((prev) => prev.filter((s) => s.current));
+    } catch (err) {
+      console.error("Revoke all sessions error:", err);
+    } finally {
+      setRevokingAll(false);
+    }
+  };
+
+  const handleCreateSubMerchant = async () => {
+    if (!subName || !subEmail) return;
+    setCreatingSub(true);
+    try {
+      const newSub = await api.post<any>("/marketplace/sub-merchants", {
+        name: subName,
+        email: subEmail,
+        commissionPct: Number(subCommission),
+      });
+      setSubMerchants((prev) => [...prev, newSub]);
+      setShowCreateSub(false);
+      setSubName("");
+      setSubEmail("");
+      setSubCommission("");
+    } catch (err) {
+      console.error("Create sub-merchant error:", err);
+    } finally {
+      setCreatingSub(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -80,11 +201,11 @@ export default function TeamPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {mockTeamMembers.map((m) => (
+                {members.map((m) => (
                   <div key={m.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                        <span className="text-blue-600 font-medium">{m.name.charAt(0)}</span>
+                        <span className="text-blue-600 font-medium">{m.name?.charAt(0) || "?"}</span>
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
@@ -95,10 +216,34 @@ export default function TeamPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      <Badge variant={m.role === "Owner" ? "info" : "neutral"}>{m.role}</Badge>
+                      {m.role === "Owner" ? (
+                        <Badge variant="info">Owner</Badge>
+                      ) : (
+                        <select
+                          value={m.role}
+                          onChange={(e) => handleRoleChange(m.id, e.target.value)}
+                          disabled={updatingRole === m.id}
+                          className="text-sm border rounded-md px-2 py-1 bg-white"
+                        >
+                          {roles.filter((r) => r !== "Owner").map((r) => (
+                            <option key={r}>{r}</option>
+                          ))}
+                        </select>
+                      )}
+                      {m.status === "invited" && (
+                        <Button variant="ghost" size="sm" onClick={() => handleResendInvite(m.id)} title="Resend invite">
+                          <Copy className="w-4 h-4" />
+                        </Button>
+                      )}
                       {m.role !== "Owner" && (
-                        <Button variant="ghost" size="sm" className="text-red-500">
-                          <X className="w-4 h-4" />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-red-500"
+                          onClick={() => handleRemoveMember(m.id)}
+                          disabled={removingId === m.id}
+                        >
+                          {removingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
                         </Button>
                       )}
                     </div>
@@ -113,6 +258,10 @@ export default function TeamPage() {
               <CardHeader><CardTitle>Invite Team Member</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Name</label>
+                    <Input value={inviteName} onChange={(e) => setInviteName(e.target.value)} placeholder="John Doe" />
+                  </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Email</label>
                     <Input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="colleague@company.com" />
@@ -129,7 +278,9 @@ export default function TeamPage() {
                 </div>
                 <div className="flex justify-end gap-3">
                   <Button variant="outline" onClick={() => setShowInvite(false)}>Cancel</Button>
-                  <Button className="bg-blue-600 hover:bg-blue-500 text-white" disabled={!inviteEmail}>Send Invite</Button>
+                  <Button className="bg-blue-600 hover:bg-blue-500 text-white" disabled={!inviteEmail || inviting} onClick={handleInvite}>
+                    {inviting ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Sending...</> : "Send Invite"}
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -172,7 +323,7 @@ export default function TeamPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {mockSubMerchants.map((sm) => (
+                {subMerchants.map((sm) => (
                   <div key={sm.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border">
                     <div>
                       <div className="flex items-center gap-2">
@@ -183,11 +334,11 @@ export default function TeamPage() {
                     </div>
                     <div className="flex items-center gap-6 text-sm">
                       <div className="text-right">
-                        <p className="font-medium">${sm.volume}</p>
+                        <p className="font-medium">${sm.volume || "0"}</p>
                         <p className="text-xs text-gray-500">Volume</p>
                       </div>
                       <div className="text-right">
-                        <p className="font-medium">{sm.commission}</p>
+                        <p className="font-medium">{sm.commission || sm.commissionPct ? `${sm.commission || sm.commissionPct}%` : "0%"}</p>
                         <p className="text-xs text-gray-500">Commission</p>
                       </div>
                     </div>
@@ -204,20 +355,26 @@ export default function TeamPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2">
                     <label className="block text-sm font-medium mb-1">Business name</label>
-                    <Input placeholder="Seller business name" />
+                    <Input value={subName} onChange={(e) => setSubName(e.target.value)} placeholder="Seller business name" />
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Email</label>
-                    <Input type="email" placeholder="seller@example.com" />
+                    <Input type="email" value={subEmail} onChange={(e) => setSubEmail(e.target.value)} placeholder="seller@example.com" />
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Commission %</label>
-                    <Input type="number" placeholder="5" />
+                    <Input type="number" value={subCommission} onChange={(e) => setSubCommission(e.target.value)} placeholder="5" />
                   </div>
                 </div>
                 <div className="flex justify-end gap-3">
                   <Button variant="outline" onClick={() => setShowCreateSub(false)}>Cancel</Button>
-                  <Button className="bg-blue-600 hover:bg-blue-500 text-white">Create Sub-Merchant</Button>
+                  <Button
+                    className="bg-blue-600 hover:bg-blue-500 text-white"
+                    disabled={!subName || !subEmail || creatingSub}
+                    onClick={handleCreateSubMerchant}
+                  >
+                    {creatingSub ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Creating...</> : "Create Sub-Merchant"}
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -230,7 +387,7 @@ export default function TeamPage() {
           <CardHeader><CardTitle>Active Sessions</CardTitle></CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {mockSessions.map((s) => (
+              {sessions.map((s) => (
                 <div key={s.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border">
                   <div className="flex items-center gap-3">
                     <Globe className="w-5 h-5 text-gray-400" />
@@ -243,16 +400,30 @@ export default function TeamPage() {
                     </div>
                   </div>
                   {!s.current && (
-                    <Button variant="ghost" size="sm" className="text-red-500">
-                      <LogOut className="w-4 h-4" /> Revoke
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-500"
+                      onClick={() => handleRevokeSession(s.id)}
+                      disabled={revokingId === s.id}
+                    >
+                      {revokingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
+                      Revoke
                     </Button>
                   )}
                 </div>
               ))}
             </div>
             <div className="mt-4 pt-4 border-t flex justify-end">
-              <Button variant="outline" size="sm" className="text-red-500 border-red-200">
-                <Ban className="w-4 h-4 mr-1" /> Revoke All Other Sessions
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-red-500 border-red-200"
+                onClick={handleRevokeAllOthers}
+                disabled={revokingAll}
+              >
+                {revokingAll ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Ban className="w-4 h-4 mr-1" />}
+                Revoke All Other Sessions
               </Button>
             </div>
           </CardContent>

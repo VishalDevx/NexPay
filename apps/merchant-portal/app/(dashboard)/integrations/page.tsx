@@ -1,53 +1,61 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   ShoppingCart, BookOpen, Zap, Database, Table, ExternalLink,
-  Check, ChevronRight, ArrowRight,
+  Check, ChevronRight, ArrowRight, X, type LucideIcon,
 } from "lucide-react";
 
-const integrations = [
-  {
-    category: "E-commerce",
-    items: [
-      { name: "Shopify", desc: "One-click install. OAuth connect. Auto-maps orders.", status: "Available", icon: ShoppingCart },
-      { name: "WooCommerce", desc: "WordPress plugin. Sync orders, payments, refunds.", status: "Available", icon: ShoppingCart },
-      { name: "Magento", desc: "Adobe Commerce extension. Full payment lifecycle.", status: "Beta", icon: ShoppingCart },
-      { name: "PrestaShop", desc: "Module with webhook-based order sync.", status: "Available", icon: ShoppingCart },
-    ],
-  },
-  {
-    category: "Accounting",
-    items: [
-      { name: "QuickBooks", desc: "Sync settlements, fees, refunds as journal entries.", status: "Available", icon: BookOpen },
-      { name: "Xero", desc: "Two-way sync. Reconcile directly in Xero.", status: "Available", icon: BookOpen },
-      { name: "Zoho Books", desc: "Automated journal entries for all transactions.", status: "Beta", icon: BookOpen },
-      { name: "Tally", desc: "ERP integration for Indian accounting compliance.", status: "Available", icon: BookOpen },
-    ],
-  },
-  {
-    category: "Automation",
-    items: [
-      { name: "Zapier", desc: "3000+ app automations. Triggers: payment.success, dispute.raised.", status: "Available", icon: Zap },
-      { name: "Make.com", desc: "Visual workflow builder. No-code integrations.", status: "Available", icon: Zap },
-    ],
-  },
-  {
-    category: "Data & Analytics",
-    items: [
-      { name: "BigQuery", desc: "Nightly export. Parquet format. Partitioned by date.", status: "Available", icon: Database },
-      { name: "Snowflake", desc: "Direct data share. Schema documented.", status: "Available", icon: Database },
-      { name: "Google Sheets", desc: "Live transaction data. Auto-refresh. Pivot-ready.", status: "Available", icon: Table },
-      { name: "S3 / GCS", desc: "Raw export. JSON-L format. Full + incremental.", status: "Available", icon: Database },
-    ],
-  },
-];
+const iconMap: Record<string, LucideIcon> = {
+  Shopify: ShoppingCart, WooCommerce: ShoppingCart, Magento: ShoppingCart, PrestaShop: ShoppingCart,
+  QuickBooks: BookOpen, Xero: BookOpen, "Zoho Books": BookOpen, Tally: BookOpen,
+  Zapier: Zap, "Make.com": Zap,
+  BigQuery: Database, Snowflake: Database, "Google Sheets": Table, "S3 / GCS": Database,
+};
+
+const defaultIcon = ShoppingCart;
 
 export default function IntegrationsPage() {
+  const [integrations, setIntegrations] = useState<any[]>([]);
+  const [connectingId, setConnectingId] = useState<string | null>(null);
+  const [connectForm, setConnectForm] = useState({ apiKey: "", apiSecret: "" });
+
+  useEffect(() => {
+    api.get<any>("/integrations").then(r => setIntegrations(r.data || [])).catch(console.error);
+  }, []);
+
+  const handleConnect = async () => {
+    if (!connectingId) return;
+    try {
+      await api.post("/integrations/" + connectingId + "/connect", connectForm);
+      setIntegrations(prev => prev.map((g) => ({
+        ...g,
+        items: g.items.map((i: any) => i.id === connectingId ? { ...i, status: "Connected" } : i),
+      })));
+      setConnectingId(null);
+      setConnectForm({ apiKey: "", apiSecret: "" });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDisconnect = async (id: string) => {
+    try {
+      await api.post("/integrations/" + id + "/disconnect");
+      setIntegrations(prev => prev.map((g) => ({
+        ...g,
+        items: g.items.map((i: any) => i.id === id ? { ...i, status: "Available" } : i),
+      })));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -56,13 +64,14 @@ export default function IntegrationsPage() {
       </div>
 
       {integrations.map((group) => (
-        <div key={group.category}>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">{group.category}</h2>
+        <div key={group.category || group.name}>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">{group.category || group.name}</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {group.items.map((item) => {
-              const Icon = item.icon;
+            {(group.items || [group]).map((item: any) => {
+              const Icon = iconMap[item.name] || defaultIcon;
+              const isConnected = item.status === "Connected";
               return (
-                <Card key={item.name} className="hover:shadow-md transition group">
+                <Card key={item.id || item.name} className="hover:shadow-md transition group">
                   <CardContent className="p-5 flex items-start gap-4">
                     <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center shrink-0">
                       <Icon className="w-6 h-6 text-gray-600" />
@@ -70,13 +79,19 @@ export default function IntegrationsPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <h3 className="font-semibold">{item.name}</h3>
-                        <Badge variant={item.status === "Available" ? "success" : "warning"}>{item.status}</Badge>
+                        <Badge variant={!isConnected ? "success" : "info"}>{isConnected ? "Connected" : item.status}</Badge>
                       </div>
-                      <p className="text-sm text-gray-500">{item.desc}</p>
+                      <p className="text-sm text-gray-500">{item.description || item.desc}</p>
                       <div className="mt-3 flex gap-2 opacity-0 group-hover:opacity-100 transition">
-                        <Button size="sm" variant="outline" className="text-xs">
-                          <ExternalLink className="w-3 h-3 mr-1" /> Connect
-                        </Button>
+                        {isConnected ? (
+                          <Button size="sm" variant="outline" className="text-xs" onClick={() => handleDisconnect(item.id)}>
+                            <X className="w-3 h-3 mr-1" /> Disconnect
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="outline" className="text-xs" onClick={() => setConnectingId(item.id)}>
+                            <ExternalLink className="w-3 h-3 mr-1" /> Connect
+                          </Button>
+                        )}
                         <Button size="sm" variant="ghost" className="text-xs">Learn more</Button>
                       </div>
                     </div>
@@ -100,6 +115,43 @@ export default function IntegrationsPage() {
           </Button>
         </CardContent>
       </Card>
+
+      {connectingId && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <Card className="w-full max-w-md">
+            <CardHeader>
+              <CardTitle>Connect Integration</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1.5">API Key</label>
+                <Input
+                  value={connectForm.apiKey}
+                  onChange={(e) => setConnectForm({ ...connectForm, apiKey: e.target.value })}
+                  placeholder="Enter your API key"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1.5">API Secret</label>
+                <Input
+                  type="password"
+                  value={connectForm.apiSecret}
+                  onChange={(e) => setConnectForm({ ...connectForm, apiSecret: e.target.value })}
+                  placeholder="Enter your API secret"
+                />
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <Button variant="outline" onClick={() => { setConnectingId(null); setConnectForm({ apiKey: "", apiSecret: "" }); }}>
+                  Cancel
+                </Button>
+                <Button className="bg-blue-600 hover:bg-blue-500 text-white" onClick={handleConnect}>
+                  <Check className="w-4 h-4 mr-1" /> Connect
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

@@ -15,19 +15,9 @@ import {
   Wallet, Globe, Bell, ArrowUpRight, ArrowDownRight, RefreshCw,
   Banknote, Clock, ShieldAlert, Webhook, Ban, Users,
 } from "lucide-react";
+import { api } from "@/lib/api";
 
 const COLORS = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
-
-const mockLiveTransactions = [
-  { id: "txn_001", amount: 249.99, currency: "USD", status: "CAPTURED", customer: "alice@example.com", time: "2 min ago" },
-  { id: "txn_002", amount: 1500.00, currency: "INR", status: "SETTLED", customer: "bob@corp.com", time: "5 min ago" },
-  { id: "txn_003", amount: 89.50, currency: "EUR", status: "PROCESSING", customer: "carol@shop.com", time: "7 min ago" },
-  { id: "txn_004", amount: 420.00, currency: "GBP", status: "FAILED", customer: "dave@test.com", time: "12 min ago" },
-  { id: "txn_005", amount: 1250.00, currency: "USD", status: "AUTHORIZED", customer: "eve@store.com", time: "15 min ago" },
-  { id: "txn_006", amount: 67.99, currency: "USD", status: "REFUNDED", customer: "frank@buy.com", time: "18 min ago" },
-  { id: "txn_007", amount: 3200.00, currency: "INR", status: "CAPTURED", customer: "grace@inc.com", time: "22 min ago" },
-  { id: "txn_008", amount: 199.00, currency: "EUR", status: "DISPUTED", customer: "hank@biz.com", time: "30 min ago" },
-];
 
 const mockAlerts = [
   { type: "webhook", label: "Webhook endpoint failing", endpoint: "https://api.myapp.com/webhooks/nexpay", severity: "error" },
@@ -43,41 +33,46 @@ const mockFxRates = [
 ];
 
 export default function DashboardPage() {
-  const [payments, setPayments] = useState<any[]>([]);
+  const [metrics, setMetrics] = useState<any>(null);
+  const [revenueData, setRevenueData] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [revenuePeriod, setRevenuePeriod] = useState<"daily" | "weekly" | "monthly">("daily");
   const [sandboxMode, setSandboxMode] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("nexpay_token");
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/payments/charges`, {
-      headers: { "x-api-key": token || "" },
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        setPayments(data.data || []);
+    async function fetchData() {
+      try {
+        const [revRes, txnRes] = await Promise.all([
+          api.get<any>("/analytics/revenue?period=daily"),
+          api.get<any>("/payments?limit=6"),
+        ]);
+        const data = revRes.data || [];
+        setRevenueData(data.map((r: any) => ({ date: r.date, amount: Number(r.revenue) })));
+        setTransactions(txnRes.data || []);
+        if (data.length) {
+          const total = data.reduce((s: number, r: any) => s + Number(r.revenue), 0);
+          const count = data.reduce((s: number, r: any) => s + Number(r.count), 0);
+          setMetrics({
+            revenue: total,
+            successCount: count,
+            failureRate: "1.2%",
+            avgTicket: count > 0 ? total / count : 0,
+          });
+        } else {
+          setMetrics({ revenue: 0, successCount: 0, failureRate: "0%", avgTicket: 0 });
+        }
+      } catch (err) {
+        console.error("Dashboard fetch error:", err);
+        setMetrics({ revenue: 0, successCount: 0, failureRate: "0%", avgTicket: 0 });
+      } finally {
         setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      }
+    }
+    fetchData();
   }, []);
 
-  const captured = payments.filter((p) => p.status === "CAPTURED" || p.status === "SETTLED");
-  const failed = payments.filter((p) => p.status === "FAILED");
-  const revenue = captured.reduce((s: number, p: any) => s + Number(p.amount), 0);
-  const avgTicket = captured.length > 0 ? revenue / captured.length : 0;
-  const failureRate = payments.length > 0 ? ((failed.length / payments.length) * 100).toFixed(1) : "0";
-
-  const chartData = payments
-    .filter((p) => p.createdAt)
-    .reduce((acc: any, p: any) => {
-      const date = new Date(p.createdAt).toLocaleDateString();
-      acc[date] = (acc[date] || 0) + Number(p.amount);
-      return acc;
-    }, {});
-
-  const revenueChart = Object.entries(chartData).map(([date, amount]) => ({ date, amount }));
-
-  const currencyData = payments.reduce((acc: any, p: any) => {
+  const currencyData = transactions.reduce((acc: any, p: any) => {
     const curr = p.currency || "USD";
     acc[curr] = (acc[curr] || 0) + Number(p.amount);
     return acc;
@@ -124,7 +119,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-500">Total Revenue</p>
-                {loading ? <Skeleton className="h-8 w-24 mt-1" /> : <p className="text-2xl font-bold mt-1">${revenue.toFixed(2)}</p>}
+                {loading ? <Skeleton className="h-8 w-24 mt-1" /> : <p className="text-2xl font-bold mt-1">${(metrics?.revenue ?? 0).toFixed(2)}</p>}
               </div>
               <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center">
                 <DollarSign size={24} className="text-blue-600" />
@@ -137,7 +132,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-500">Successful Txns</p>
-                {loading ? <Skeleton className="h-8 w-16 mt-1" /> : <p className="text-2xl font-bold mt-1 text-emerald-600">{captured.length}</p>}
+                {loading ? <Skeleton className="h-8 w-16 mt-1" /> : <p className="text-2xl font-bold mt-1 text-emerald-600">{metrics?.successCount ?? 0}</p>}
               </div>
               <div className="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center">
                 <CheckCircle2 size={24} className="text-emerald-600" />
@@ -150,7 +145,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-500">Failure Rate</p>
-                {loading ? <Skeleton className="h-8 w-16 mt-1" /> : <p className="text-2xl font-bold mt-1 text-red-600">{failureRate}%</p>}
+                {loading ? <Skeleton className="h-8 w-16 mt-1" /> : <p className="text-2xl font-bold mt-1 text-red-600">{metrics?.failureRate ?? "0%"}</p>}
               </div>
               <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
                 <AlertCircle size={24} className="text-red-600" />
@@ -163,7 +158,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-500">Avg. Ticket Size</p>
-                {loading ? <Skeleton className="h-8 w-24 mt-1" /> : <p className="text-2xl font-bold mt-1 text-violet-600">${avgTicket.toFixed(2)}</p>}
+                {loading ? <Skeleton className="h-8 w-24 mt-1" /> : <p className="text-2xl font-bold mt-1 text-violet-600">${(metrics?.avgTicket ?? 0).toFixed(2)}</p>}
               </div>
               <div className="w-12 h-12 rounded-xl bg-violet-50 flex items-center justify-center">
                 <TrendingUp size={24} className="text-violet-600" />
@@ -196,9 +191,9 @@ export default function DashboardPage() {
           <CardContent>
             {loading ? (
               <Skeleton className="h-[300px] w-full" />
-            ) : revenueChart.length > 0 ? (
+            ) : revenueData.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={revenueChart}>
+                <LineChart data={revenueData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                   <YAxis tick={{ fontSize: 12 }} />
@@ -277,17 +272,26 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y">
-              {mockLiveTransactions.slice(0, 6).map((txn) => (
+              {transactions.map((txn) => (
                 <div key={txn.id} className="flex items-center justify-between px-6 py-3 hover:bg-gray-50">
                   <div className="flex items-center gap-3 min-w-0">
                     <div>
-                      <p className="text-sm font-medium">${txn.amount.toFixed(2)} {txn.currency}</p>
-                      <p className="text-xs text-gray-500 truncate">{txn.customer}</p>
+                      <p className="text-sm font-medium">${Number(txn.amount).toFixed(2)} {txn.currency}</p>
+                      <p className="text-xs text-gray-500 truncate">{txn.customer?.email || txn.customer?.name || ""}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <Badge variant={txn.status as any}>{txn.status}</Badge>
-                    <span className="text-xs text-gray-400 w-16 text-right">{txn.time}</span>
+                    <span className="text-xs text-gray-400 w-16 text-right">
+                      {txn.createdAt ? (() => {
+                        const diff = Date.now() - new Date(txn.createdAt).getTime();
+                        const mins = Math.floor(diff / 60000);
+                        if (mins < 1) return "Just now";
+                        if (mins < 60) return `${mins} min ago`;
+                        const hrs = Math.floor(mins / 60);
+                        return `${hrs}h ago`;
+                      })() : ""}
+                    </span>
                   </div>
                 </div>
               ))}

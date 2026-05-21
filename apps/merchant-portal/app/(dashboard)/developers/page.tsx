@@ -8,6 +8,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Copy, Key, Globe, RefreshCw, Plus, Trash2, Webhook, Check, X, Play, ToggleLeft, ToggleRight, Eye, EyeOff } from "lucide-react";
+import api from "@/lib/api";
 
 export default function DevelopersPage() {
   const [apiKeys, setApiKeys] = useState<any[]>([]);
@@ -21,70 +22,70 @@ export default function DevelopersPage() {
   const [copied, setCopied] = useState("");
   const [deliveryFilter, setDeliveryFilter] = useState("ALL");
 
-  const token = typeof window !== "undefined" ? localStorage.getItem("nexpay_token") : "";
-
-  const fetchKeys = () => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/merchants/api-keys`, {
-      headers: { "x-api-key": token || "" },
-    }).then((r) => r.json()).then((data) => setApiKeys(data.data || []));
-  };
-
-  const fetchWebhooks = () => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/merchants/webhooks`, {
-      headers: { "x-api-key": token || "" },
-    }).then((r) => r.json()).then((data) => setWebhooks(data.data || []));
-  };
-
-  const fetchDeliveries = () => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/merchants/webhooks/deliveries`, {
-      headers: { "x-api-key": token || "" },
-    }).then((r) => r.json()).then((data) => setDeliveries(data.data || []));
-  };
-
-  useEffect(() => { fetchKeys(); fetchWebhooks(); fetchDeliveries(); }, []);
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const [keysRes, webhookRes, deliveryRes] = await Promise.all([
+          api.get<any>("/merchants/api-keys"),
+          api.get<any>("/merchants/webhooks"),
+          api.get<any>("/merchants/webhooks/deliveries"),
+        ]);
+        setApiKeys(keysRes.data || []);
+        setWebhooks(webhookRes.data || []);
+        setDeliveries(deliveryRes.data || []);
+      } catch (err) {
+        console.error("Developers fetch error:", err);
+      }
+    }
+    fetchData();
+  }, []);
 
   const generateKey = async () => {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/merchants/api-keys`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": token || "" },
-      body: JSON.stringify({ env: newKeyEnv }),
-    });
-    const data = await res.json();
-    if (data.apiKey) {
-      setShowKey(data.apiKey.key);
-      fetchKeys();
+    try {
+      const res = await api.post<any>("/merchants/api-keys", { env: newKeyEnv });
+      if (res.rawKey) {
+        setShowKey(res.rawKey);
+      }
+      const keysRes = await api.get<any>("/merchants/api-keys");
+      setApiKeys(keysRes.data || []);
+    } catch (err) {
+      console.error("Generate key error:", err);
     }
   };
 
   const revokeKey = async (id: string) => {
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/merchants/api-keys/${id}`, {
-      method: "DELETE",
-      headers: { "x-api-key": token || "" },
-    });
-    fetchKeys();
+    try {
+      await api.delete("/merchants/api-keys/" + id);
+      const keysRes = await api.get<any>("/merchants/api-keys");
+      setApiKeys(keysRes.data || []);
+    } catch (err) {
+      console.error("Revoke key error:", err);
+    }
   };
 
   const createWebhook = async () => {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/merchants/webhooks`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": token || "" },
-      body: JSON.stringify({ url: webhookUrl, events: webhookEvents }),
-    });
-    const data = await res.json();
-    if (data.endpoint) {
-      setShowKey(data.endpoint.secret);
+    try {
+      const res = await api.post<any>("/merchants/webhooks", { url: webhookUrl, events: webhookEvents });
+      if (res.secret) {
+        setShowKey(res.secret);
+      }
       setShowWebhookForm(false);
       setWebhookUrl("");
-      fetchWebhooks();
+      const webhookRes = await api.get<any>("/merchants/webhooks");
+      setWebhooks(webhookRes.data || []);
+    } catch (err) {
+      console.error("Create webhook error:", err);
     }
   };
 
   const replayDelivery = async (id: string) => {
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/merchants/webhooks/deliveries/${id}/replay`, {
-      method: "POST",
-      headers: { "x-api-key": token || "" },
-    });
-    fetchDeliveries();
+    try {
+      await api.post("/merchants/webhooks/deliveries/" + id + "/replay");
+      const deliveryRes = await api.get<any>("/merchants/webhooks/deliveries");
+      setDeliveries(deliveryRes.data || []);
+    } catch (err) {
+      console.error("Replay delivery error:", err);
+    }
   };
 
   const copyToClipboard = (text: string, label: string) => {

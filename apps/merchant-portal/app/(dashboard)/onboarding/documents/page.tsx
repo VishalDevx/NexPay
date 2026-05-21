@@ -2,6 +2,7 @@
 
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
+import api from "@/lib/api";
 import Link from "next/link";
 import { ArrowLeft, Upload, X, FileText, Check, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,7 @@ export default function DocumentsPage() {
   const [dragOver, setDragOver] = useState<string | null>(null);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const handleFile = (docId: string, file: File) => {
+  const handleFile = async (docId: string, file: File) => {
     const maxSize = docId === "bank_statement" ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
     if (file.size > maxSize) {
       setFiles((prev) => ({
@@ -57,22 +58,44 @@ export default function DocumentsPage() {
       },
     }));
 
-    // Simulate upload
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += 20;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64 = event.target?.result as string;
+      const base64Data = base64.split(",")[1];
+
       setFiles((prev) => ({
         ...prev,
-        [docId]: { ...prev[docId]!, progress },
+        [docId]: { ...prev[docId]!, progress: 50 },
       }));
-      if (progress >= 100) {
-        clearInterval(interval);
+
+      try {
+        await api.post("/uploads", {
+          fileName: file.name,
+          fileType: file.type,
+          fileSize: file.size,
+          fileData: base64Data,
+          category: "KYC",
+        });
+
         setFiles((prev) => ({
           ...prev,
-          [docId]: { ...prev[docId]!, status: "done", progress: 100 },
+          [docId]: { ...prev[docId]!, progress: 100, status: "done" },
+        }));
+      } catch (err) {
+        console.error(err);
+        setFiles((prev) => ({
+          ...prev,
+          [docId]: { ...prev[docId]!, status: "error", error: "Upload failed" },
         }));
       }
-    }, 200);
+    };
+    reader.onerror = () => {
+      setFiles((prev) => ({
+        ...prev,
+        [docId]: { ...prev[docId]!, status: "error", error: "Read failed" },
+      }));
+    };
+    reader.readAsDataURL(file);
   };
 
   const removeFile = (docId: string) => {
@@ -85,8 +108,8 @@ export default function DocumentsPage() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <Link href="/onboarding" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition">
-        <ArrowLeft className="w-4 h-4" /> Back to onboarding
+      <Link href="/onboarding/business-profile" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition">
+        <ArrowLeft className="w-4 h-4" /> Back to business profile
       </Link>
 
       <div>

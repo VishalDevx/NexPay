@@ -7,13 +7,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Upload, Check, AlertTriangle, Clock, X, FileText, ShieldAlert } from "lucide-react";
-
-const mockDisputes = [
-  { id: "dsp_001", paymentId: "pay_abc123", reason: "service_not_received", amount: 199.00, currency: "USD", status: "RAISED", createdAt: new Date(Date.now() - 2 * 86400000).toISOString(), deadline: 7 },
-  { id: "dsp_002", paymentId: "pay_def456", reason: "duplicate", amount: 89.50, currency: "USD", status: "EVIDENCE_SUBMITTED", createdAt: new Date(Date.now() - 5 * 86400000).toISOString(), deadline: 4 },
-  { id: "dsp_003", paymentId: "pay_ghi789", reason: "product_unacceptable", amount: 450.00, currency: "USD", status: "UNDER_REVIEW", createdAt: new Date(Date.now() - 10 * 86400000).toISOString(), deadline: 2 },
-  { id: "dsp_004", paymentId: "pay_jkl012", reason: "credit_not_processed", amount: 1200.00, currency: "USD", status: "RESOLVED_MERCHANT_WON", createdAt: new Date(Date.now() - 20 * 86400000).toISOString(), deadline: 0 },
-];
+import { api } from "@/lib/api";
 
 export default function DisputesPage() {
   const [disputes, setDisputes] = useState<any[]>([]);
@@ -22,16 +16,30 @@ export default function DisputesPage() {
   const [showEvidence, setShowEvidence] = useState(false);
   const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
   const [dragover, setDragover] = useState(false);
+  const [summary, setSummary] = useState({ openDisputes: 0, amountAtRisk: 0, winRate: 0 });
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const token = localStorage.getItem("nexpay_token");
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/disputes`, {
-      headers: { "x-api-key": token || "" },
-    })
-      .then((r) => r.json())
-      .then((data) => { setDisputes(data.data?.length ? data.data : mockDisputes); setLoading(false); })
-      .catch(() => { setDisputes(mockDisputes); setLoading(false); });
+    async function fetchDisputes() {
+      try {
+        const res = await api.get<any>("/disputes");
+        const data = res.data || [];
+        setDisputes(data);
+        const open = data.filter((d: any) => d.status === "RAISED" || d.status === "EVIDENCE_SUBMITTED" || d.status === "UNDER_REVIEW");
+        const won = data.filter((d: any) => d.status === "RESOLVED_MERCHANT_WON");
+        const totalResolved = data.filter((d: any) => d.status.startsWith("RESOLVED"));
+        setSummary({
+          openDisputes: open.length,
+          amountAtRisk: open.reduce((s: number, d: any) => s + Number(d.amount), 0),
+          winRate: totalResolved.length > 0 ? Math.round((won.length / totalResolved.length) * 100) : 0,
+        });
+      } catch (err) {
+        console.error("Disputes fetch error:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchDisputes();
   }, []);
 
   const handleFileDrop = (e: React.DragEvent) => {
@@ -42,15 +50,14 @@ export default function DisputesPage() {
   };
 
   const submitEvidence = async () => {
-    const token = localStorage.getItem("nexpay_token");
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/disputes/${selectedDispute.id}/evidence`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": token || "" },
-      body: JSON.stringify({ files: evidenceFiles.map((f) => f.name) }),
-    });
-    setDisputes(disputes.map((d) => d.id === selectedDispute.id ? { ...d, status: "EVIDENCE_SUBMITTED" } : d));
-    setShowEvidence(false);
-    setEvidenceFiles([]);
+    try {
+      await api.post(`/disputes/${selectedDispute.id}/evidence`, { files: evidenceFiles.map((f) => f.name) });
+      setDisputes(disputes.map((d) => d.id === selectedDispute.id ? { ...d, status: "EVIDENCE_SUBMITTED" } : d));
+      setShowEvidence(false);
+      setEvidenceFiles([]);
+    } catch (err) {
+      console.error("Evidence submission error:", err);
+    }
   };
 
   const getUrgencyBadge = (daysLeft: number) => {
@@ -118,29 +125,21 @@ export default function DisputesPage() {
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><AlertTriangle className="w-4 h-4" /> Open Disputes</CardTitle></CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold text-amber-600">{disputes.filter((d) => d.status === "RAISED" || d.status === "EVIDENCE_SUBMITTED" || d.status === "UNDER_REVIEW").length}</p>
+            <p className="text-3xl font-bold text-amber-600">{summary.openDisputes}</p>
             <p className="text-sm text-gray-500 mt-1">Requiring action</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><ShieldAlert className="w-4 h-4" /> Amount at Risk</CardTitle></CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold text-red-600">
-              ${disputes.filter((d) => d.status !== "RESOLVED_MERCHANT_WON" && d.status !== "RESOLVED_MERCHANT_LOST").reduce((s: number, d: any) => s + Number(d.amount), 0).toFixed(2)}
-            </p>
+            <p className="text-3xl font-bold text-red-600">${summary.amountAtRisk.toFixed(2)}</p>
             <p className="text-sm text-gray-500 mt-1">Frozen in wallet</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><Check className="w-4 h-4" /> Win Rate</CardTitle></CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold text-emerald-600">
-              {(() => {
-                const resolved = disputes.filter((d) => d.status === "RESOLVED_MERCHANT_WON" || d.status === "RESOLVED_MERCHANT_LOST");
-                if (!resolved.length) return "—";
-                return `${((resolved.filter((d) => d.status === "RESOLVED_MERCHANT_WON").length / resolved.length) * 100).toFixed(0)}%`;
-              })()}
-            </p>
+            <p className="text-3xl font-bold text-emerald-600">{summary.winRate > 0 || disputes.some((d) => d.status.startsWith("RESOLVED")) ? `${summary.winRate}%` : "\u2014"}</p>
             <p className="text-sm text-gray-500 mt-1">Resolution rate</p>
           </CardContent>
         </Card>

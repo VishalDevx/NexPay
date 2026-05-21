@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,16 +12,38 @@ import {
   Plus, Check, Send,
 } from "lucide-react";
 
-const mockInvoices = [
-  { id: "INV-001", customer: "Acme Corp", amount: 2499.00, status: "Paid", date: "2026-05-15", dueDate: "2026-06-15" },
-  { id: "INV-002", customer: "Beta Inc", amount: 5400.00, status: "Sent", date: "2026-05-18", dueDate: "2026-06-18" },
-  { id: "INV-003", customer: "Gamma LLC", amount: 1200.00, status: "Viewed", date: "2026-05-20", dueDate: "2026-06-20" },
-  { id: "INV-004", customer: "Delta Co", amount: 8750.00, status: "Overdue", date: "2026-04-01", dueDate: "2026-05-01" },
-  { id: "INV-005", customer: "Epsilon Ltd", amount: 3200.00, status: "Draft", date: "2026-05-21", dueDate: "2026-06-21" },
-];
-
 export default function InvoicingPage() {
   const [showBuilder, setShowBuilder] = useState(false);
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [recurringInvoices, setRecurringInvoices] = useState<any[]>([]);
+  const [taxConfig, setTaxConfig] = useState<any>({});
+
+  useEffect(() => {
+    async function fetchInvoicing() {
+      try {
+        const [invRes, recRes, taxRes] = await Promise.all([
+          api.get<any>("/invoices"),
+          api.get<any>("/invoices/recurring"),
+          api.get<any>("/invoices/tax"),
+        ]);
+        setInvoices(invRes.data || []);
+        setRecurringInvoices(recRes.data || []);
+        setTaxConfig(taxRes);
+      } catch (err) {
+        console.error("Invoicing fetch error:", err);
+      }
+    }
+    fetchInvoicing();
+  }, []);
+
+  const totalOutstanding = invoices
+    .filter(inv => inv.status !== "Paid" && inv.status !== "Cancelled" && inv.status !== "Draft")
+    .reduce((sum, inv) => sum + (inv.total || inv.amount || 0), 0);
+  const totalPaid = invoices
+    .filter(inv => inv.status === "Paid")
+    .reduce((sum, inv) => sum + (inv.total || inv.amount || 0), 0);
+  const overdueCount = invoices.filter(inv => inv.status === "Overdue").length;
+  const overdueRate = invoices.length ? ((overdueCount / invoices.length) * 100).toFixed(1) : "0.0";
 
   return (
     <div className="space-y-6">
@@ -31,10 +54,10 @@ export default function InvoicingPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[
-          { label: "Outstanding", value: "$8,750", color: "text-red-600", bg: "bg-red-50" },
-          { label: "Paid this month", value: "$24,099", color: "text-emerald-600", bg: "bg-emerald-50" },
+          { label: "Outstanding", value: `$${totalOutstanding.toLocaleString()}`, color: "text-red-600", bg: "bg-red-50" },
+          { label: "Paid this month", value: `$${totalPaid.toLocaleString()}`, color: "text-emerald-600", bg: "bg-emerald-50" },
           { label: "Avg. payment time", value: "12 days", color: "text-blue-600", bg: "bg-blue-50" },
-          { label: "Overdue rate", value: "8.3%", color: "text-amber-600", bg: "bg-amber-50" },
+          { label: "Overdue rate", value: `${overdueRate}%`, color: "text-amber-600", bg: "bg-amber-50" },
         ].map((s) => (
           <Card key={s.label}>
             <CardContent className={`p-5 ${s.bg}`}>
@@ -67,11 +90,11 @@ export default function InvoicingPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {mockInvoices.map((inv) => (
+              {invoices.map((inv) => (
                 <TableRow key={inv.id}>
-                  <TableCell className="font-medium">{inv.id}</TableCell>
-                  <TableCell>{inv.customer}</TableCell>
-                  <TableCell>${inv.amount.toFixed(2)}</TableCell>
+                  <TableCell className="font-medium">{inv.invoiceNumber || inv.id}</TableCell>
+                  <TableCell>{inv.customerName || inv.customer}</TableCell>
+                  <TableCell>${(inv.total || inv.amount || 0).toFixed(2)}</TableCell>
                   <TableCell>
                     <Badge variant={inv.status === "Paid" ? "success" : inv.status === "Overdue" ? "destructive" : inv.status === "Draft" ? "neutral" : "warning"}>
                       {inv.status}
@@ -144,16 +167,13 @@ export default function InvoicingPage() {
           <CardHeader><CardTitle className="flex items-center gap-2"><Repeat className="w-4 h-4" /> Recurring Invoices</CardTitle></CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {[
-                { customer: "Acme Corp", amount: 2499.00, frequency: "Monthly", next: "Jun 15, 2026" },
-                { customer: "Beta Inc", amount: 5400.00, frequency: "Quarterly", next: "Aug 18, 2026" },
-              ].map((r) => (
-                <div key={r.customer} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
+              {recurringInvoices.map((r, i) => (
+                <div key={r.id || i} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
                   <div>
-                    <p className="font-medium text-sm">{r.customer}</p>
-                    <p className="text-xs text-gray-500">{r.frequency} · Next: {r.next}</p>
+                    <p className="font-medium text-sm">{r.customerName || r.customer}</p>
+                    <p className="text-xs text-gray-500">{r.frequency} · Next: {r.nextDate || r.next || "—"}</p>
                   </div>
-                  <p className="font-medium">${r.amount.toFixed(2)}</p>
+                  <p className="font-medium">${(r.total || r.amount || 0).toFixed(2)}</p>
                 </div>
               ))}
             </div>
@@ -166,15 +186,15 @@ export default function InvoicingPage() {
             <div className="bg-gray-50 rounded-lg p-4">
               <div className="flex justify-between text-sm mb-2">
                 <span className="font-medium">GST HSN/SAC</span>
-                <span className="text-gray-500">9983</span>
+                <span className="text-gray-500">{taxConfig.hsnCode || "9983"}</span>
               </div>
               <div className="flex justify-between text-sm mb-2">
                 <span className="font-medium">GSTIN</span>
-                <span className="text-gray-500 font-mono">27AAACP1234A1Z1</span>
+                <span className="text-gray-500 font-mono">{taxConfig.gstin || "27AAACP1234A1Z1"}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="font-medium">TDS Rate</span>
-                <span className="text-gray-500">1% (Section 194-O)</span>
+                <span className="text-gray-500">{taxConfig.tdsRate ? `${taxConfig.tdsRate}% (Section 194-O)` : "1% (Section 194-O)"}</span>
               </div>
             </div>
             <Button variant="outline" size="sm">Download Tax Summary</Button>

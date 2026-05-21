@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import api from "@/lib/api";
 import Link from "next/link";
 import { ArrowLeft, Landmark, Check, Loader2, Plus, Star, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -43,25 +44,36 @@ export default function BankAccountPage() {
     }
 
     setVerifying(true);
-    // Simulate penny-drop verification
-    await new Promise((r) => setTimeout(r, 2000));
-    setVerifying(false);
-    setVerified(true);
 
-    const newAccount: BankAccount = {
-      id: Math.random().toString(36).slice(2),
-      accountName: form.accountName,
-      accountNumber: `XXXX${form.accountNumber.slice(-4)}`,
-      ifsc: form.ifsc.toUpperCase(),
-      bankName: form.bankName,
-      isPrimary: accounts.length === 0,
-      verified: true,
-    };
+    try {
+      const res = await api.post<any>("/bank-accounts", {
+        accountNumber: form.accountNumber,
+        ifsc: form.ifsc,
+        accountHolder: form.accountName,
+      });
 
-    setAccounts([...accounts, newAccount]);
-    setShowForm(false);
-    setForm({ accountName: "", accountNumber: "", confirmAccountNumber: "", ifsc: "", bankName: "" });
-    setVerified(false);
+      setVerifying(false);
+      setVerified(true);
+
+      const newAccount: BankAccount = {
+        id: res.data?.id || Math.random().toString(36).slice(2),
+        accountName: form.accountName,
+        accountNumber: `XXXX${form.accountNumber.slice(-4)}`,
+        ifsc: form.ifsc.toUpperCase(),
+        bankName: form.bankName,
+        isPrimary: accounts.length === 0,
+        verified: true,
+      };
+
+      setAccounts([...accounts, newAccount]);
+      setShowForm(false);
+      setForm({ accountName: "", accountNumber: "", confirmAccountNumber: "", ifsc: "", bankName: "" });
+      setVerified(false);
+    } catch (e: any) {
+      console.error(e);
+      setVerifying(false);
+      setError(e?.response?.data?.message || "Verification failed. Please check your details.");
+    }
   };
 
   const setPrimary = (id: string) => {

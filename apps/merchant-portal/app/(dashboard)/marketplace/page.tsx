@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,27 @@ import {
 
 export default function MarketplacePage() {
   const [splitPreview, setSplitPreview] = useState({ seller: 85, platform: 13, tax: 2 });
+  const [dashboard, setDashboard] = useState<any>({ gmv: 0, commission: 0, activeSellers: 0, topSeller: null });
+  const [subMerchants, setSubMerchants] = useState<any[]>([]);
+  const [splitRules, setSplitRules] = useState<any[]>([]);
+
+  useEffect(() => {
+    async function fetchMarketplace() {
+      try {
+        const [dashRes, subRes, splitRes] = await Promise.all([
+          api.get<any>("/marketplace/dashboard"),
+          api.get<any>("/marketplace/sub-merchants"),
+          api.get<any>("/marketplace/split-rules"),
+        ]);
+        setDashboard(dashRes);
+        setSubMerchants(subRes.data || []);
+        setSplitRules(splitRes.data || []);
+      } catch (err) {
+        console.error("Marketplace fetch error:", err);
+      }
+    }
+    fetchMarketplace();
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -66,23 +88,33 @@ export default function MarketplacePage() {
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="bg-gray-50 rounded-xl p-4">
                 <p className="text-sm text-gray-500">Total GMV</p>
-                <p className="text-2xl font-bold text-blue-600">$1.2M</p>
+                <p className="text-2xl font-bold text-blue-600">
+                  {dashboard.gmv >= 1000000
+                    ? `$${(dashboard.gmv / 1000000).toFixed(1)}M`
+                    : `$${(dashboard.gmv / 1000).toFixed(1)}K`}
+                </p>
                 <p className="text-xs text-emerald-600">+23% vs last month</p>
               </div>
               <div className="bg-gray-50 rounded-xl p-4">
                 <p className="text-sm text-gray-500">Commission Earned</p>
-                <p className="text-2xl font-bold text-emerald-600">$62.4K</p>
+                <p className="text-2xl font-bold text-emerald-600">
+                  ${(dashboard.commission / 1000).toFixed(1)}K
+                </p>
                 <p className="text-xs text-gray-500">This month</p>
               </div>
               <div className="bg-gray-50 rounded-xl p-4">
                 <p className="text-sm text-gray-500">Active Sellers</p>
-                <p className="text-2xl font-bold text-amber-600">124</p>
+                <p className="text-2xl font-bold text-amber-600">{dashboard.activeSellers}</p>
                 <p className="text-xs text-gray-500">+12 this week</p>
               </div>
               <div className="bg-gray-50 rounded-xl p-4">
                 <p className="text-sm text-gray-500">Top Seller</p>
-                <p className="text-2xl font-bold text-indigo-600">$89.1K</p>
-                <p className="text-xs text-gray-500">Seller Three</p>
+                <p className="text-2xl font-bold text-indigo-600">
+                  {dashboard.topSeller
+                    ? `$${(dashboard.topSeller.revenue / 1000).toFixed(1)}K`
+                    : "--"}
+                </p>
+                <p className="text-xs text-gray-500">{dashboard.topSeller?.name || "N/A"}</p>
               </div>
             </div>
             <Button variant="outline" size="sm" className="w-full"><LayoutDashboard className="w-4 h-4 mr-1" /> Open Platform Dashboard</Button>

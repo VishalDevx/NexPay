@@ -15,18 +15,13 @@ import {
 
 type Tab = "health" | "merchants" | "kyc" | "disputes" | "fraud-rules" | "investigation" | "ledger-adjust" | "rate-limit";
 
-const mockRateLimitData = [
-  { ip: "203.0.113.42", endpoint: "/api/v1/auth/login", blocked: true, reason: "10 failed attempts", blockedUntil: new Date(Date.now() + 3600000).toISOString() },
-  { ip: "198.51.100.7", endpoint: "/api/v1/payments/charges", blocked: false, reason: "", blockedUntil: null },
-  { ip: "192.0.2.88", endpoint: "/api/v1/auth/login", blocked: true, reason: "Rate limit exceeded", blockedUntil: new Date(Date.now() - 1800000).toISOString() },
-];
-
-const mockSystemMetrics = {
-  bullmq: [{ queue: "webhook-delivery", depth: 12 }, { queue: "payout-processing", depth: 3 }, { queue: "reconciliation", depth: 0 }],
-  redis: { memory: "12.4MB", hitRate: "98.2%", connections: 24 },
-  db: { connections: 8, poolSize: 20, activeQueries: 2 },
-  latency: { p50: "24ms", p95: "89ms", p99: "245ms" },
-  errorRate: "0.12%",
+const defaultHealth = {
+  api: "healthy", database: "healthy", redis: "healthy",
+  bullmq: [{ queue: "webhook-delivery", depth: 0 }, { queue: "payout-processing", depth: 0 }, { queue: "reconciliation", depth: 0 }],
+  redisMetrics: { memory: "-", hitRate: "-", connections: 0 },
+  db: { connections: 0, poolSize: 20, activeQueries: 0 },
+  latency: { p50: "-", p95: "-", p99: "-" },
+  errorRate: "-",
   lastReconciliation: new Date().toISOString(),
 };
 
@@ -35,7 +30,8 @@ export default function AdminPage() {
   const [merchants, setMerchants] = useState<any[]>([]);
   const [disputes, setDisputes] = useState<any[]>([]);
   const [fraudRules, setFraudRules] = useState<any[]>([]);
-  const [health, setHealth] = useState<any>(null);
+  const [health, setHealth] = useState<any>(defaultHealth);
+  const [rateLimits, setRateLimits] = useState<any[]>([]);
   const [token, setToken] = useState<string | null>(null);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPass, setLoginPass] = useState("");
@@ -70,7 +66,8 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!token) return;
-    if (tab === "health") adminFetch("/api/v1/admin/health").then(setHealth);
+    if (tab === "health") adminFetch("/api/v1/admin/health").then((d) => setHealth(d || defaultHealth));
+    if (tab === "rate-limit") adminFetch("/api/v1/admin/rate-limits").then((d) => setRateLimits(d.data || []));
     if (tab === "merchants" || tab === "kyc") adminFetch("/api/v1/admin/merchants").then((d) => setMerchants(d.data || []));
     if (tab === "disputes") adminFetch("/api/v1/admin/disputes").then((d) => setDisputes(d.data || []));
     if (tab === "fraud-rules") adminFetch("/api/v1/admin/fraud-rules").then((d) => setFraudRules(d.data || []));
@@ -232,10 +229,10 @@ export default function AdminPage() {
                   <div>
                     <p className="text-xs text-gray-500 uppercase mb-2">API Latency</p>
                     <div className="grid grid-cols-3 gap-3">
-                      {Object.entries(mockSystemMetrics.latency).map(([k, v]) => (
+                      {Object.entries(health?.latency || defaultHealth.latency).map(([k, v]) => (
                         <div key={k} className="bg-slate-900 rounded-lg p-3 text-center">
                           <p className="text-xs text-gray-500">{k.toUpperCase()}</p>
-                          <p className="text-lg font-bold text-white">{v}</p>
+                          <p className="text-lg font-bold text-white">{String(v)}</p>
                         </div>
                       ))}
                     </div>
@@ -243,19 +240,19 @@ export default function AdminPage() {
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div className="bg-slate-900 rounded-lg p-3">
                       <p className="text-gray-500">Error Rate</p>
-                      <p className="text-white font-medium">{mockSystemMetrics.errorRate}</p>
+                      <p className="text-white font-medium">{health?.errorRate || "-"}</p>
                     </div>
                     <div className="bg-slate-900 rounded-lg p-3">
                       <p className="text-gray-500">Redis Hit Rate</p>
-                      <p className="text-white font-medium">{mockSystemMetrics.redis.hitRate}</p>
+                      <p className="text-white font-medium">{(health?.redisMetrics as any)?.hitRate || "-"}</p>
                     </div>
                     <div className="bg-slate-900 rounded-lg p-3">
                       <p className="text-gray-500">DB Connections</p>
-                      <p className="text-white font-medium">{mockSystemMetrics.db.connections}/{mockSystemMetrics.db.poolSize}</p>
+                      <p className="text-white font-medium">{(health?.db as any)?.connections || 0}/{(health?.db as any)?.poolSize || 20}</p>
                     </div>
                     <div className="bg-slate-900 rounded-lg p-3">
                       <p className="text-gray-500">Redis Memory</p>
-                      <p className="text-white font-medium">{mockSystemMetrics.redis.memory}</p>
+                      <p className="text-white font-medium">{(health?.redisMetrics as any)?.memory || "-"}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -273,21 +270,21 @@ export default function AdminPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {mockSystemMetrics.bullmq.map((q) => (
+                      {(health?.bullmq || defaultHealth.bullmq).map((q: any) => (
                         <TableRow key={q.queue} className="border-slate-700">
-                          <TableCell className="text-white">{q.queue}</TableCell>
-                          <TableCell>{q.depth}</TableCell>
-                          <TableCell>
-                            <Badge variant={q.depth > 10 ? "warning" : "success"}>
-                              {q.depth > 10 ? "Backlogged" : "Healthy"}
-                            </Badge>
-                          </TableCell>
+                          <td className="py-2 text-sm text-gray-300">{q.queue}</td>
+                          <td className="py-2 text-sm text-gray-300">{q.depth}</td>
+                          <td className="py-2">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${q.depth > 10 ? "bg-yellow-900/50 text-yellow-400" : "bg-emerald-900/50 text-emerald-400"}`}>
+                              {q.depth > 10 ? "Stressed" : "Healthy"}
+                            </span>
+                          </td>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
                   <div className="mt-4 pt-4 border-t border-slate-700 text-sm text-gray-400">
-                    Last reconciliation: {new Date(mockSystemMetrics.lastReconciliation).toLocaleString()}
+                    Last reconciliation: {health?.lastReconciliation ? new Date(health.lastReconciliation).toLocaleString() : "N/A"}
                   </div>
                 </CardContent>
               </Card>
@@ -626,7 +623,7 @@ export default function AdminPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {mockRateLimitData.map((r) => (
+                    {(rateLimits.length > 0 ? rateLimits : []).map((r: any, i: number) => (
                       <TableRow key={r.ip} className="border-slate-700">
                         <TableCell className="font-mono text-sm text-white">{r.ip}</TableCell>
                         <TableCell className="text-sm text-gray-300">{r.endpoint}</TableCell>

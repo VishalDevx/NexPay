@@ -1,43 +1,105 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, statusBadgeVariant } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Wallet, Calendar, Banknote, Download, ChevronDown, ChevronUp, Zap } from "lucide-react";
-
-const mockPayouts = [
-  { id: "po_001", reference: "PO-2024-001", totalAmount: 12430.50, currency: "USD", status: "COMPLETED", bankRef: "NEFT123456789", completedAt: new Date(Date.now() - 1 * 86400000).toISOString(), createdAt: new Date(Date.now() - 2 * 86400000).toISOString() },
-  { id: "po_002", reference: "PO-2024-002", totalAmount: 8420.00, currency: "USD", status: "PROCESSING", createdAt: new Date(Date.now() - 1 * 86400000).toISOString() },
-  { id: "po_003", reference: "PO-2024-003", totalAmount: 5600.75, currency: "USD", status: "FAILED", bankRef: "ACH_FAILED", completedAt: new Date(Date.now() - 3 * 86400000).toISOString(), createdAt: new Date(Date.now() - 5 * 86400000).toISOString() },
-];
-
-const mockSettlementItems = [
-  { txnId: "pay_001", gross: 249.99, fee: 7.50, disputeReserve: 0, net: 242.49 },
-  { txnId: "pay_002", gross: 1500.00, fee: 37.50, disputeReserve: 0, net: 1462.50 },
-  { txnId: "pay_003", gross: 89.50, fee: 2.68, disputeReserve: 0, net: 86.82 },
-  { txnId: "pay_004", gross: 420.00, fee: 12.60, disputeReserve: 199.00, net: 208.40 },
-];
+import { api } from "@/lib/api";
 
 export default function PayoutsPage() {
   const [payouts, setPayouts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [schedule, setSchedule] = useState<"daily" | "weekly" | "monthly">("daily");
   const [minThreshold, setMinThreshold] = useState("100");
-  const [selectedBank, setSelectedBank] = useState("HDFC Bank ****1234");
+  const [selectedBank, setSelectedBank] = useState("");
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+  const [availableBalance, setAvailableBalance] = useState(0);
   const [showSettlement, setShowSettlement] = useState(false);
+  const [selectedPayout, setSelectedPayout] = useState<any>(null);
+  const [settlementItems, setSettlementItems] = useState<any[]>([]);
+  const [payouting, setPayouting] = useState(false);
+  const initialLoad = useRef(true);
 
   useEffect(() => {
-    const token = localStorage.getItem("nexpay_token");
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/payouts`, {
-      headers: { "x-api-key": token || "" },
-    })
-      .then((r) => r.json())
-      .then((data) => { setPayouts(data.data?.length ? data.data : mockPayouts); setLoading(false); })
-      .catch(() => { setPayouts(mockPayouts); setLoading(false); });
+    async function fetchData() {
+      try {
+        const [payoutsRes, bankRes, settingsRes] = await Promise.all([
+          api.get<any>("/payouts"),
+          api.get<any>("/bank-accounts"),
+          api.get<any>("/settings").catch(() => null),
+        ]);
+        const payoutsData = payoutsRes.data || [];
+        setPayouts(payoutsData);
+        setAvailableBalance(payoutsRes.availableBalance || 0);
+
+        const accounts = bankRes.data || [];
+        setBankAccounts(accounts);
+        if (accounts.length > 0) setSelectedBank(accounts[0].id || accounts[0].label || accounts[0].accountNumber);
+
+        const settings = settingsRes?.data?.settingsJson;
+        if (settings?.payoutSchedule) {
+          setSchedule(settings.payoutSchedule.frequency || "daily");
+          setMinThreshold(String(settings.payoutSchedule.minThreshold ?? "100"));
+        }
+      } catch (err) {
+        console.error("Payouts fetch error:", err);
+      } finally {
+        setLoading(false);
+        initialLoad.current = false;
+      }
+    }
+    fetchData();
   }, []);
+
+  useEffect(() => {
+    if (initialLoad.current) return;
+    const timeout = setTimeout(async () => {
+      try {
+        await api.put("/settings/settings", {
+          payoutSchedule: { frequency: schedule, minThreshold: Number(minThreshold) },
+        });
+      } catch (err) {
+        console.error("Save schedule error:", err);
+      }
+    }, 600);
+    return () => clearTimeout(timeout);
+  }, [schedule, minThreshold]);
+
+  const handleManualPayout = async () => {
+    setPayouting(true);
+    try {
+      await api.post("/payouts", {
+        amount: availableBalance,
+        bankAccountId: selectedBank,
+        scheduledFor: new Date().toISOString(),
+      });
+      const res = await api.get<any>("/payouts");
+      setPayouts(res.data || []);
+      setAvailableBalance(res.availableBalance || 0);
+    } catch (err) {
+      console.error("Manual payout error:", err);
+    } finally {
+      setPayouting(false);
+    }
+  };
+
+  const toggleSettlement = (payout: any) => {
+    if (selectedPayout?.id === payout.id && showSettlement) {
+      setShowSettlement(false);
+      setSelectedPayout(null);
+      setSettlementItems([]);
+    } else {
+      setSelectedPayout(payout);
+      setSettlementItems(payout.items || []);
+      setShowSettlement(true);
+    }
+  };
+
+  const bankLabel = (acc: any) =>
+    acc.label || `${acc.bankName || ""} ****${(acc.accountNumber || "").slice(-4) || acc.last4 || ""}`.trim();
 
   return (
     <div className="space-y-6">
@@ -85,18 +147,29 @@ export default function PayoutsPage() {
                 onChange={(e) => setSelectedBank(e.target.value)}
                 className="w-full border rounded-lg px-3 py-2 text-sm"
               >
-                <option>HDFC Bank ****1234 (Primary)</option>
-                <option>ICICI Bank ****5678</option>
+                {bankAccounts.length > 0 ? (
+                  bankAccounts.map((acc: any) => (
+                    <option key={acc.id || acc.accountNumber} value={acc.id || acc.accountNumber}>
+                      {bankLabel(acc)}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">No bank accounts found</option>
+                )}
               </select>
             </div>
           </div>
           <div className="flex items-center justify-between mt-6 pt-4 border-t">
             <div className="flex items-center gap-2 text-sm text-gray-500">
               <Wallet className="w-4 h-4" />
-              Available for payout: <span className="font-semibold text-gray-900">$12,430.50</span>
+              Available for payout: <span className="font-semibold text-gray-900">${availableBalance.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
             </div>
-            <Button className="bg-blue-600 hover:bg-blue-500 text-white">
-              <Zap className="w-4 h-4 mr-1" /> Pay Now
+            <Button
+              className="bg-blue-600 hover:bg-blue-500 text-white"
+              disabled={payouting || availableBalance <= 0}
+              onClick={handleManualPayout}
+            >
+              <Zap className="w-4 h-4 mr-1" /> {payouting ? "Processing..." : "Pay Now"}
             </Button>
           </div>
         </CardContent>
@@ -129,14 +202,14 @@ export default function PayoutsPage() {
               ) : payouts.length > 0 ? (
                 payouts.map((p: any) => (
                   <TableRow key={p.id}>
-                    <TableCell className="font-mono text-xs">{p.reference}</TableCell>
+                    <TableCell className="font-mono text-xs">{p.reference || p.id?.slice(0, 12)}</TableCell>
                     <TableCell className="font-medium">${Number(p.totalAmount).toLocaleString("en-US", { minimumFractionDigits: 2 })}</TableCell>
-                    <TableCell className="text-xs text-gray-500">{p.bankRef || "—"}</TableCell>
+                    <TableCell className="text-xs text-gray-500">{p.bankRef || "\u2014"}</TableCell>
                     <TableCell><Badge variant={statusBadgeVariant(p.status) as any}>{p.status}</Badge></TableCell>
                     <TableCell className="text-gray-500 text-sm">{new Date(p.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</TableCell>
                     <TableCell>
-                      <Button variant="ghost" size="sm" onClick={() => setShowSettlement(!showSettlement)}>
-                        {showSettlement ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      <Button variant="ghost" size="sm" onClick={() => toggleSettlement(p)}>
+                        {showSettlement && selectedPayout?.id === p.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -149,42 +222,48 @@ export default function PayoutsPage() {
         </CardContent>
       </Card>
 
-      {showSettlement && (
+      {showSettlement && selectedPayout && (
         <Card className="border-blue-200">
           <CardHeader>
-            <CardTitle className="text-sm">Settlement Breakdown — PO-2024-001</CardTitle>
+            <CardTitle className="text-sm">Settlement Breakdown — {selectedPayout.reference || selectedPayout.id?.slice(0, 12)}</CardTitle>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Transaction</TableHead>
-                  <TableHead>Gross</TableHead>
-                  <TableHead>Fee</TableHead>
-                  <TableHead>Reserve</TableHead>
-                  <TableHead>Net</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {mockSettlementItems.map((item, i) => (
-                  <TableRow key={i}>
-                    <TableCell className="font-mono text-xs">{item.txnId}</TableCell>
-                    <TableCell>${item.gross.toFixed(2)}</TableCell>
-                    <TableCell className="text-red-500">-${item.fee.toFixed(2)}</TableCell>
-                    <TableCell className="text-amber-500">{item.disputeReserve > 0 ? `-$${item.disputeReserve.toFixed(2)}` : "—"}</TableCell>
-                    <TableCell className="font-medium text-emerald-600">${item.net.toFixed(2)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <div className="flex justify-end mt-4 pt-4 border-t">
-              <div className="text-right">
-                <p className="text-sm text-gray-500">Total Gross: <span className="font-medium text-gray-900">$2,259.49</span></p>
-                <p className="text-sm text-gray-500">Total Fees: <span className="font-medium text-red-500">-$60.28</span></p>
-                <p className="text-sm text-gray-500">Total Reserve: <span className="font-medium text-amber-500">-$199.00</span></p>
-                <p className="text-lg font-bold text-emerald-600">Net Payout: $2,000.21</p>
-              </div>
-            </div>
+            {settlementItems.length > 0 ? (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Transaction</TableHead>
+                      <TableHead>Gross</TableHead>
+                      <TableHead>Fee</TableHead>
+                      <TableHead>Reserve</TableHead>
+                      <TableHead>Net</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {settlementItems.map((item: any, i: number) => (
+                      <TableRow key={item.txnId || i}>
+                        <TableCell className="font-mono text-xs">{item.txnId}</TableCell>
+                        <TableCell>${Number(item.gross).toFixed(2)}</TableCell>
+                        <TableCell className="text-red-500">-${Number(item.fee).toFixed(2)}</TableCell>
+                        <TableCell className="text-amber-500">{Number(item.disputeReserve || item.reserve || 0) > 0 ? `-$${Number(item.disputeReserve || item.reserve || 0).toFixed(2)}` : "\u2014"}</TableCell>
+                        <TableCell className="font-medium text-emerald-600">${Number(item.net).toFixed(2)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <div className="flex justify-end mt-4 pt-4 border-t">
+                  <div className="text-right">
+                    <p className="text-sm text-gray-500">Total Gross: <span className="font-medium text-gray-900">${settlementItems.reduce((s: number, i: any) => s + Number(i.gross), 0).toFixed(2)}</span></p>
+                    <p className="text-sm text-gray-500">Total Fees: <span className="font-medium text-red-500">-${settlementItems.reduce((s: number, i: any) => s + Number(i.fee), 0).toFixed(2)}</span></p>
+                    <p className="text-sm text-gray-500">Total Reserve: <span className="font-medium text-amber-500">-${settlementItems.reduce((s: number, i: any) => s + Number(i.disputeReserve || i.reserve || 0), 0).toFixed(2)}</span></p>
+                    <p className="text-lg font-bold text-emerald-600">Net Payout: ${settlementItems.reduce((s: number, i: any) => s + Number(i.net), 0).toFixed(2)}</p>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-gray-400 text-center py-8">No settlement details available</p>
+            )}
           </CardContent>
         </Card>
       )}
