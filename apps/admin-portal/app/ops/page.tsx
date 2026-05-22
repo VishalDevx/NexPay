@@ -5,10 +5,10 @@ import {
   LifeBuoy, Shield, FileText, Activity, AlertTriangle, DollarSign,
   Webhook, Zap, CheckCircle, XCircle, MessageSquare, ChevronDown,
   ChevronRight, Plus, Send, UserCheck, Search, Clock, Globe,
-  Server, Database, Ban, Save, ExternalLink, Eye,
+  Server, Database, Ban, Save, ExternalLink, Eye, Monitor, Wrench,
 } from "lucide-react";
 
-type OpsTab = "support" | "kyc" | "reviews" | "activity" | "payouts" | "webhooks" | "incidents" | "reserve";
+type OpsTab = "support" | "kyc" | "reviews" | "activity" | "payouts" | "webhooks" | "incidents" | "reserve" | "status-components";
 
 const severityColors: Record<string, string> = {
   SEV1: "bg-red-900/50 text-red-400 border-red-700",
@@ -83,6 +83,7 @@ export default function OpsPage() {
     { id: "webhooks" as OpsTab, label: "Webhook Failures", icon: Webhook },
     { id: "incidents" as OpsTab, label: "Incidents", icon: Zap },
     { id: "reserve" as OpsTab, label: "Reserve Approvals", icon: Ban },
+    { id: "status-components" as OpsTab, label: "Status Components", icon: Monitor },
   ];
 
   return (
@@ -131,6 +132,7 @@ export default function OpsPage() {
         {tab === "webhooks" && <WebhookFailures adminFetch={adminFetch} />}
         {tab === "incidents" && <Incidents adminFetch={adminFetch} />}
         {tab === "reserve" && <ReserveApprovals adminFetch={adminFetch} />}
+        {tab === "status-components" && <StatusComponents adminFetch={adminFetch} />}
       </div>
     </div>
   );
@@ -1103,6 +1105,102 @@ function Incidents({ adminFetch }: { adminFetch: Function }) {
                     </div>
                   </div>
                 )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatusComponents({ adminFetch }: { adminFetch: Function }) {
+  const [components, setComponents] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [updating, setUpdating] = useState<string | null>(null);
+
+  const statusList = ["operational", "degraded", "major_outage", "maintenance"] as const;
+
+  const fetchComponents = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3004"}/api/v1/status/components`);
+      const d = await res.json();
+      setComponents(d.data || []);
+    } catch {
+      // silent
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchComponents();
+  }, []);
+
+  const toggleStatus = async (id: string, current: string) => {
+    const idx = statusList.indexOf(current as any);
+    const next = statusList[(idx + 1) % statusList.length];
+    setUpdating(id);
+    // In a real app this would call a PATCH endpoint
+    // For demo we update locally
+    setComponents((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, status: next } : c))
+    );
+    setUpdating(null);
+  };
+
+  const statusIndicator = (s: string) => {
+    switch (s) {
+      case "operational": return <CheckCircle size={14} className="text-emerald-400" />;
+      case "degraded": return <AlertTriangle size={14} className="text-amber-400" />;
+      case "major_outage": return <XCircle size={14} className="text-red-400" />;
+      case "maintenance": return <Wrench size={14} className="text-blue-400" />;
+      default: return <CheckCircle size={14} className="text-gray-500" />;
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-white font-semibold flex items-center gap-2">
+            <Monitor size={18} /> Status Components
+          </h3>
+          <span className="text-xs text-gray-500 bg-slate-700 px-2 py-1 rounded">{components.length} components</span>
+        </div>
+        {loading && components.length === 0 ? (
+          <p className="text-sm text-gray-500 text-center py-8">Loading...</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {components.map((c: any) => (
+              <div key={c.id} className="bg-slate-900 border border-slate-700 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    {statusIndicator(c.status)}
+                    <span className="text-white font-medium text-sm">{c.name}</span>
+                  </div>
+                  <button
+                    onClick={() => toggleStatus(c.id, c.status)}
+                    disabled={updating === c.id}
+                    className={`text-xs px-2 py-1 rounded-lg font-medium border transition-colors ${
+                      c.status === "operational"
+                        ? "bg-emerald-900/30 text-emerald-400 border-emerald-700 hover:bg-emerald-900/50"
+                        : c.status === "degraded"
+                        ? "bg-amber-900/30 text-amber-400 border-amber-700 hover:bg-amber-900/50"
+                        : c.status === "major_outage"
+                        ? "bg-red-900/30 text-red-400 border-red-700 hover:bg-red-900/50"
+                        : "bg-blue-900/30 text-blue-400 border-blue-700 hover:bg-blue-900/50"
+                    }`}
+                  >
+                    {updating === c.id ? "..." : c.status.replace(/_/g, " ")}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mb-2">{c.description}</p>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-emerald-400 font-medium">{c.uptime}%</span>
+                  <span className="text-gray-600">uptime</span>
+                  <span className="text-gray-600 ml-auto">Click to cycle status</span>
+                </div>
               </div>
             ))}
           </div>

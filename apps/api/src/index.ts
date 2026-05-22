@@ -44,6 +44,7 @@ import adminOpsRouter from "./modules/admin/admin-ops.router";
 import incidentsRouter from "./modules/incidents/incidents.router";
 import glRouter from "./modules/general-ledger/gl.router";
 import billingAdminRouter from "./modules/billing/billing-admin.router";
+import statusRouter from "./modules/status/status.router";
 
 import { webhookWorker } from "./workers/webhook.worker";
 import { payoutWorker } from "./workers/payout.worker";
@@ -72,6 +73,8 @@ app.use("/api/v1/merchants", merchantRouter);
 app.use("/api/v1/admin/ops", adminOpsRouter);
 app.use("/api/v1/admin/billing", billingAdminRouter);
 app.use("/api/v1/incidents", incidentsRouter);
+
+app.use("/api/v1/status", statusRouter);
 
 app.use(authMiddleware);
 app.use(idempotencyMiddleware);
