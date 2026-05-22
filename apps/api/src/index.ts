@@ -53,6 +53,11 @@ import { payoutWorker } from "./workers/payout.worker";
 import { runReconciliation } from "./workers/reconciliation.worker";
 import { runFraudUnblock } from "./workers/fraud-unblock.worker";
 import { runBilling } from "./workers/billing.worker";
+import { outboxWorker } from "./workers/outbox.worker";
+
+import { metricsMiddleware } from "./middleware/metrics";
+import metricsRouter from "./modules/metrics/metrics.router";
+import outboxRouter from "./modules/outbox/outbox.router";
 
 const app = express();
 
@@ -60,6 +65,8 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 app.use(rateLimitMiddleware);
+
+app.use(metricsMiddleware);
 
 app.use((req: any, _res, next) => {
   console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
@@ -85,6 +92,9 @@ app.use(idempotencyMiddleware);
 app.use(sandboxMiddleware);
 
 app.use("/api/v1/gl", glRouter);
+app.use("/api/v1", metricsRouter);
+app.use("/api/v1", outboxRouter);
+
 app.use("/api/v1/merchants/lifecycle", merchantLifecycleRouter);
 app.use("/api/v1/support/tickets", supportRouter);
 app.use("/api/v1/support/canned-responses", cannedResponsesRouter);
@@ -146,6 +156,7 @@ process.on("SIGTERM", async () => {
   console.log("Shutting down gracefully...");
   await webhookWorker.close();
   await payoutWorker.close();
+  outboxWorker.stop();
   await prisma.$disconnect();
   server.close();
   process.exit(0);
@@ -155,6 +166,7 @@ process.on("SIGINT", async () => {
   console.log("Shutting down gracefully...");
   await webhookWorker.close();
   await payoutWorker.close();
+  outboxWorker.stop();
   await prisma.$disconnect();
   server.close();
   process.exit(0);
