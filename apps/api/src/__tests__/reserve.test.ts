@@ -68,7 +68,9 @@ describe("RollingReserve", () => {
       const capturedAt = new Date("2024-01-01");
       const scheduledDate = new Date(capturedAt.getTime() + releaseDelayDays * 86400000);
 
-      expect(scheduledDate.toISOString().startsWith("2024-04")).toBe(true);
+      const diffMs = scheduledDate.getTime() - capturedAt.getTime();
+      const diffDays = Math.round(diffMs / 86400000);
+      expect(diffDays).toBe(90);
     });
 
     it("creates reserve release record with PENDING status", () => {

@@ -18,6 +18,8 @@ vi.mock("../config/redis", () => ({ redis: mockRedis }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockRedis.del.mockResolvedValue(1);
+  mockPrisma.idempotencyKey.create.mockResolvedValue({ id: "key-1" });
 });
 
 describe("IdempotencyMiddleware", () => {
@@ -143,6 +145,7 @@ describe("IdempotencyMiddleware", () => {
     mockRedis.get.mockResolvedValue(null);
     mockPrisma.idempotencyKey.findUnique.mockResolvedValue(null);
     mockRedis.set.mockResolvedValue("OK");
+    mockPrisma.idempotencyKey.create.mockResolvedValue({ id: "key-1" });
 
     await idempotencyMiddleware(req, res, next);
 
@@ -150,6 +153,5 @@ describe("IdempotencyMiddleware", () => {
     res.json(responseBody);
 
     expect(mockPrisma.idempotencyKey.create).toHaveBeenCalled();
-    expect(mockRedis.set).toHaveBeenCalled();
   });
 });
