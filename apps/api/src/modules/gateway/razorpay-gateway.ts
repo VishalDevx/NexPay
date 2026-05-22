@@ -36,12 +36,12 @@ async function razorpayRequest(
   });
 
   if (!response.ok) {
-    const errBody = await response.json().catch(() => ({}));
+    const errBody: any = await response.json().catch(() => ({}));
     const error = new Error(
-      `Razorpay API error: ${errBody.error?.description || response.statusText}`,
+      `Razorpay API error: ${errBody?.error?.description || response.statusText}`,
     ) as Error & { status: number; code: string };
     error.status = response.status;
-    error.code = errBody.error?.code || "razorpay_error";
+    error.code = errBody?.error?.code || "razorpay_error";
     throw error;
   }
 

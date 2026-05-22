@@ -30,13 +30,13 @@ async function stripeRequest(
   });
 
   if (!response.ok) {
-    const errBody = await response.json().catch(() => ({}));
+    const errBody: any = await response.json().catch(() => ({}));
     const error = new Error(
-      `Stripe API error: ${errBody.error?.message || response.statusText}`,
+      `Stripe API error: ${errBody?.error?.message || response.statusText}`,
     ) as Error & { status: number; code: string; stripeCode?: string };
     error.status = response.status;
-    error.code = errBody.error?.type || "stripe_error";
-    error.stripeCode = errBody.error?.code;
+    error.code = errBody?.error?.type || "stripe_error";
+    error.stripeCode = errBody?.error?.code;
     throw error;
   }
 
