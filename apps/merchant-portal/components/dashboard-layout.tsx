@@ -34,6 +34,7 @@ const navItems = [
   { href: "/general-ledger", label: "General Ledger", icon: BookOpen },
   { href: "/reconciliation", label: "Reconciliation", icon: BarChart3 },
   { href: "/developers", label: "Developers", icon: Settings },
+  { href: "/api-reference", label: "API Reference", icon: BookOpen },
   { href: "/team", label: "Team", icon: Users },
   { href: "/settings", label: "Settings", icon: Sliders },
 ];

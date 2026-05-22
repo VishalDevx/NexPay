@@ -32,6 +32,7 @@ import paymentMethodsRouter from "./modules/payment-methods/payment-methods.rout
 import uploadsRouter from "./modules/uploads/uploads.router";
 import reconciliationRouter from "./modules/reconciliation/reconciliation.router";
 import integrationsRouter from "./modules/integrations/integrations.router";
+import gatewayRouter from "./modules/gateway/gateway.router";
 import sandboxRouter from "./modules/sandbox/sandbox.router";
 import supportRouter from "./modules/support/support.router";
 import cannedResponsesRouter from "./modules/support/canned-responses.router";
@@ -45,6 +46,7 @@ import incidentsRouter from "./modules/incidents/incidents.router";
 import glRouter from "./modules/general-ledger/gl.router";
 import billingAdminRouter from "./modules/billing/billing-admin.router";
 import statusRouter from "./modules/status/status.router";
+import openapiRouter from "./modules/openapi/openapi.router";
 
 import { webhookWorker } from "./workers/webhook.worker";
 import { payoutWorker } from "./workers/payout.worker";
@@ -75,6 +77,8 @@ app.use("/api/v1/admin/billing", billingAdminRouter);
 app.use("/api/v1/incidents", incidentsRouter);
 
 app.use("/api/v1/status", statusRouter);
+
+app.use("/api/v1", openapiRouter);
 
 app.use(authMiddleware);
 app.use(idempotencyMiddleware);
@@ -109,6 +113,7 @@ app.use("/api/v1/notifications", notificationsRouter);
 app.use("/api/v1/payment-methods", paymentMethodsRouter);
 app.use("/api/v1/uploads", uploadsRouter);
 app.use("/api/v1/reconciliation", reconciliationRouter);
+app.use("/api/v1/gateway", gatewayRouter);
 app.use("/api/v1/integrations", integrationsRouter);
 app.use("/api/v1/sandbox", sandboxRouter);
 
