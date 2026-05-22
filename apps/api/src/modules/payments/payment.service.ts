@@ -6,6 +6,8 @@ import { ledgerRepo } from "../ledger/ledger.repo";
 import { fraudEngine } from "../fraud/fraud.engine";
 import { glService } from "../general-ledger/gl.service";
 import { billingService } from "../billing/billing.service";
+import { outboxService } from "../outbox/outbox.service";
+import { metrics } from "../metrics/metrics";
 import Decimal from "decimal.js";
 
 const DECIMAL_PRECISION = 4;
@@ -106,6 +108,25 @@ export const paymentService = {
         reason: "Sandbox capture",
       });
 
+      const pm = input.paymentMethod;
+      metrics.incrementCounter("payment_success_total", {
+        currency: input.currency,
+        payment_method: pm?.type || "unknown",
+      });
+
+      await outboxService.createEvent({
+        eventType: "payment.captured",
+        aggregateType: "payment",
+        aggregateId: payment.id,
+        payload: {
+          merchantId: input.merchantId,
+          amount: input.amount,
+          currency: input.currency,
+          status: "CAPTURED",
+          paymentMethod: pm,
+        },
+      }).catch((err) => console.error("[Outbox] Failed to create event:", err.message));
+
       const accounts = await ledgerRepo.getOrCreateAccounts(input.merchantId, input.currency);
       await doubleEntryBook({
         debitAccountId: accounts.assetAccount.id,
@@ -156,6 +177,23 @@ export const paymentService = {
         actor: "fraud_engine",
         reason: `Fraud score ${fraudResult.totalScore} exceeds threshold`,
       });
+
+      metrics.incrementCounter("fraud_decline_total");
+      metrics.incrementCounter("payment_failure_total", { reason: "fraud_decline" });
+
+      await outboxService.createEvent({
+        eventType: "payment.failed",
+        aggregateType: "payment",
+        aggregateId: payment.id,
+        payload: {
+          merchantId: input.merchantId,
+          amount: input.amount,
+          currency: input.currency,
+          status: "FAILED",
+          reason: `Fraud score ${fraudResult.totalScore}`,
+        },
+      }).catch((err) => console.error("[Outbox] Failed to create event:", err.message));
+
       return paymentRepo.findById(payment.id);
     }
 

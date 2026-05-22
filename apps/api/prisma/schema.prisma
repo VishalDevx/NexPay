@@ -1092,6 +1092,23 @@ model CannedResponse {
   @@map("canned_responses")
 }
 
+model OutboxEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  eventType     String
+  aggregateType String
+  aggregateId   String
+  payload       Json
+  status        String   @default("PENDING")
+  retryCount    Int      @default(0)
+  lastError     String?
+  createdAt     DateTime @default(now())
+  publishedAt   DateTime?
+
+  @@index([status, createdAt])
+  @@index([eventType])
+  @@map("outbox_events")
+}
+
 model RateLimit {
   id        String   @id @default(uuid()) @db.Uuid
   ip        String
