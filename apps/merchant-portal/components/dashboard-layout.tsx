@@ -19,6 +19,7 @@ import {
   BookOpen,
   BarChart3,
   Sliders,
+  Webhook,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ const navItems = [
   { href: "/disputes", label: "Disputes", icon: Shield },
   { href: "/sandbox", label: "Sandbox", icon: Beaker },
   { href: "/general-ledger", label: "General Ledger", icon: BookOpen },
+  { href: "/webhooks", label: "Webhooks", icon: Webhook },
   { href: "/reconciliation", label: "Reconciliation", icon: BarChart3 },
   { href: "/developers", label: "Developers", icon: Settings },
   { href: "/api-reference", label: "API Reference", icon: BookOpen },

@@ -7,8 +7,9 @@ import {
   ChevronRight, Plus, Send, UserCheck, Search, Clock, Globe,
   Server, Database, Ban, Save, ExternalLink, Eye, Monitor, Wrench,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 
-type OpsTab = "support" | "kyc" | "reviews" | "activity" | "payouts" | "webhooks" | "incidents" | "reserve" | "status-components";
+type OpsTab = "support" | "kyc" | "reviews" | "activity" | "payouts" | "webhooks" | "incidents" | "reserve" | "status-components" | "outbox";
 
 const severityColors: Record<string, string> = {
   SEV1: "bg-red-900/50 text-red-400 border-red-700",
@@ -84,6 +85,7 @@ export default function OpsPage() {
     { id: "incidents" as OpsTab, label: "Incidents", icon: Zap },
     { id: "reserve" as OpsTab, label: "Reserve Approvals", icon: Ban },
     { id: "status-components" as OpsTab, label: "Status Components", icon: Monitor },
+    { id: "outbox" as OpsTab, label: "Outbox", icon: Zap },
   ];
 
   return (
@@ -133,6 +135,7 @@ export default function OpsPage() {
         {tab === "incidents" && <Incidents adminFetch={adminFetch} />}
         {tab === "reserve" && <ReserveApprovals adminFetch={adminFetch} />}
         {tab === "status-components" && <StatusComponents adminFetch={adminFetch} />}
+        {tab === "outbox" && <OutboxPanel adminFetch={adminFetch} />}
       </div>
     </div>
   );
@@ -1203,6 +1206,126 @@ function StatusComponents({ adminFetch }: { adminFetch: Function }) {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OutboxPanel({ adminFetch }: { adminFetch: Function }) {
+  const [pending, setPending] = useState<any[]>([]);
+  const [failed, setFailed] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [pd, fd] = await Promise.all([
+        adminFetch("/api/v1/admin/outbox/pending"),
+        adminFetch("/api/v1/admin/outbox/failed"),
+      ]);
+      setPending(pd.data || []);
+      setFailed(fd.data || []);
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const handleProcess = async () => {
+    await adminFetch("/api/v1/admin/outbox/process", { method: "POST" });
+    fetchData();
+  };
+
+  const handleRetry = async (id: string) => {
+    await adminFetch(`/api/v1/admin/outbox/${id}/retry`, { method: "POST" });
+    fetchData();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-white font-semibold flex items-center gap-2">
+            <Zap size={18} /> Outbox Events
+          </h3>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 bg-slate-700 px-2 py-1 rounded">{pending.length} pending</span>
+            <span className="text-xs text-gray-500 bg-slate-700 px-2 py-1 rounded">{failed.length} failed</span>
+            <button
+              onClick={handleProcess}
+              disabled={pending.length === 0}
+              className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-gray-500 text-white rounded-lg text-xs transition-colors"
+            >
+              <Zap size={12} /> Process Now
+            </button>
+          </div>
+        </div>
+
+        {loading ? (
+          <p className="text-sm text-gray-500 text-center py-8">Loading...</p>
+        ) : (
+          <div className="space-y-6">
+            {failed.length > 0 && (
+              <div>
+                <h4 className="text-sm text-red-400 font-medium mb-2 flex items-center gap-1">
+                  <XCircle size={14} /> Failed Events ({failed.length})
+                </h4>
+                <div className="space-y-2">
+                  {failed.map((ev: any) => (
+                    <div key={ev.id} className="bg-slate-900 border border-slate-700 rounded-lg p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-mono text-blue-400 bg-blue-900/30 px-2 py-0.5 rounded">{ev.eventType}</span>
+                            <span className="text-xs text-gray-500">{ev.aggregateType}:{ev.aggregateId?.slice(0, 12)}</span>
+                          </div>
+                          <p className="text-xs text-red-400 mt-1">{ev.lastError || "No error details"}</p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Retries: {ev.retryCount} | Created: {new Date(ev.createdAt).toLocaleString()}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleRetry(ev.id)}
+                          className="ml-3 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs transition-colors flex-shrink-0"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {pending.length > 0 && (
+              <div>
+                <h4 className="text-sm text-amber-400 font-medium mb-2 flex items-center gap-1">
+                  <Clock size={14} /> Pending Events ({pending.length})
+                </h4>
+                <div className="space-y-2">
+                  {pending.slice(0, 20).map((ev: any) => (
+                    <div key={ev.id} className="bg-slate-900 border border-slate-700 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-mono text-blue-400 bg-blue-900/30 px-2 py-0.5 rounded">{ev.eventType}</span>
+                        <span className="text-xs text-gray-500">{ev.aggregateType}:{ev.aggregateId?.slice(0, 12)}</span>
+                        <span className="text-xs text-gray-500 ml-auto">{new Date(ev.createdAt).toLocaleString()}</span>
+                      </div>
+                    </div>
+                  ))}
+                  {pending.length > 20 && (
+                    <p className="text-xs text-gray-500 text-center">+{pending.length - 20} more pending events</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {pending.length === 0 && failed.length === 0 && (
+              <p className="text-sm text-gray-500 text-center py-4">No outbox events</p>
+            )}
           </div>
         )}
       </div>

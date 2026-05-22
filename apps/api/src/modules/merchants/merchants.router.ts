@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import { env } from "../../config/env";
 import { webhookService } from "../webhooks/webhook.service";
 import { authMiddleware } from "../../middleware/auth";
+import { metrics } from "../metrics/metrics";
 import crypto from "crypto";
 
 const router = Router();
@@ -377,7 +378,7 @@ authRouter.get("/profile", async (req: Request, res: Response) => {
 
 authRouter.post("/api-keys", async (req: Request, res: Response) => {
   try {
-    const { env: keyEnv } = req.body;
+    const { env: keyEnv, scopes } = req.body;
     const prefix = `nex_${keyEnv === "TEST" ? "test" : "live"}_`;
     const rawKey = prefix + crypto.randomBytes(24).toString("hex");
     const keyHash = crypto.createHash("sha256").update(rawKey).digest("hex");
@@ -388,11 +389,11 @@ authRouter.post("/api-keys", async (req: Request, res: Response) => {
         keyHash,
         prefix,
         env: keyEnv || "LIVE",
-        scopes: ["charges:write", "charges:read"],
+        scopes: scopes || ["charges:write", "charges:read"],
       },
     });
 
-    res.status(201).json({ apiKey: { id: apiKey.id, prefix: apiKey.prefix, env: apiKey.env, key: rawKey } });
+    res.status(201).json({ apiKey: { id: apiKey.id, prefix: apiKey.prefix, env: apiKey.env, key: rawKey, scopes: apiKey.scopes } });
   } catch (err: any) {
     res.status(422).json({ error: "api_key_creation_failed", message: err.message });
   }
@@ -483,6 +484,124 @@ authRouter.post("/webhooks/deliveries/:id/replay", async (req: Request, res: Res
   );
 
   res.json({ status: "replayed", deliveryId: delivery.id });
+});
+
+authRouter.get("/api-logs", async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
+    const offset = parseInt(req.query.offset as string) || 0;
+    const method = req.query.method as string;
+    const statusCode = req.query.statusCode as string;
+    const search = req.query.search as string;
+
+    let logs = metrics.getApiLogs(req.merchant!.id, 1000, 0);
+
+    if (method) logs = logs.filter((l) => l.method === method.toUpperCase());
+    if (statusCode) logs = logs.filter((l) => String(l.status).startsWith(statusCode));
+    if (search) {
+      const q = search.toLowerCase();
+      logs = logs.filter(
+        (l) => l.id.toLowerCase().includes(q) || l.path.toLowerCase().includes(q)
+      );
+    }
+
+    const total = logs.length;
+    const page = logs.slice(offset, offset + limit);
+
+    res.json({ data: page, total, limit, offset });
+  } catch (err: any) {
+    res.status(500).json({ error: "api_logs_failed", message: err.message });
+  }
+});
+
+authRouter.patch("/webhooks/:id", async (req: Request, res: Response) => {
+  try {
+    const { url, events, enabled } = req.body;
+    const updateData: Record<string, any> = {};
+    if (url !== undefined) updateData.url = url;
+    if (events !== undefined) updateData.events = events;
+    if (enabled !== undefined) updateData.enabled = enabled;
+
+    const endpoint = await prisma.webhookEndpoint.updateMany({
+      where: { id: req.params.id, merchantId: req.merchant!.id },
+      data: updateData,
+    });
+
+    res.json({ updated: true, endpoint });
+  } catch (err: any) {
+    res.status(422).json({ error: "webhook_update_failed", message: err.message });
+  }
+});
+
+authRouter.post("/webhooks/:id/rotate-secret", async (req: Request, res: Response) => {
+  try {
+    const secret = webhookService.generateSecret();
+    const secretHash = crypto.createHash("sha256").update(secret).digest("hex");
+
+    await prisma.webhookEndpoint.updateMany({
+      where: { id: req.params.id, merchantId: req.merchant!.id },
+      data: { secretHash },
+    });
+
+    res.json({ secret, message: "New signing secret generated. Previous secret is invalidated." });
+  } catch (err: any) {
+    res.status(422).json({ error: "secret_rotation_failed", message: err.message });
+  }
+});
+
+authRouter.get("/webhooks/:id/secret", async (req: Request, res: Response) => {
+  try {
+    const endpoint = await prisma.webhookEndpoint.findFirst({
+      where: { id: req.params.id, merchantId: req.merchant!.id },
+    });
+    if (!endpoint) return res.status(404).json({ error: "not_found" });
+    res.json({ secretHash: endpoint.secretHash });
+  } catch (err: any) {
+    res.status(500).json({ error: "get_secret_failed", message: err.message });
+  }
+});
+
+authRouter.get("/webhooks/deliveries/:id", async (req: Request, res: Response) => {
+  try {
+    const delivery = await prisma.webhookDelivery.findFirst({
+      where: { id: req.params.id, endpoint: { merchantId: req.merchant!.id } },
+      include: { endpoint: { select: { url: true } } },
+    });
+    if (!delivery) return res.status(404).json({ error: "not_found" });
+    res.json({ data: delivery });
+  } catch (err: any) {
+    res.status(500).json({ error: "delivery_fetch_failed", message: err.message });
+  }
+});
+
+authRouter.post("/webhooks/deliveries/:id/retry", async (req: Request, res: Response) => {
+  try {
+    const delivery = await prisma.webhookDelivery.findFirst({
+      where: { id: req.params.id, endpoint: { merchantId: req.merchant!.id } },
+      include: { endpoint: true },
+    });
+
+    if (!delivery) return res.status(404).json({ error: "not_found" });
+    if (delivery.status !== "FAILED") {
+      return res.status(400).json({ error: "invalid_status", message: "Only failed deliveries can be retried" });
+    }
+
+    await prisma.webhookDelivery.update({
+      where: { id: delivery.id },
+      data: { status: "PENDING", attempts: 0, nextRetryAt: new Date() },
+    });
+
+    const { webhookQueue } = await import("../webhooks/webhook.service");
+    await webhookQueue.add(
+      `webhook:retry:${delivery.id}`,
+      { deliveryId: delivery.id, endpointId: delivery.endpointId, payload: delivery.payload, secretHash: delivery.endpoint.secretHash },
+      { jobId: `retry:${delivery.id}`, attempts: 5, backoff: { type: "exponential", delay: 1000 } }
+    );
+
+    res.json({ status: "retried", deliveryId: delivery.id });
+  } catch (err: any) {
+    res.status(500).json({ error: "retry_failed", message: err.message });
+  }
 });
 
 router.use(authRouter);

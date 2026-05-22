@@ -12,6 +12,7 @@ import {
   Search, Ban, Sliders, Eye, RefreshCw, DollarSign, Clock, Server,
   Database, Globe, Lock, Unlock, Plus, Save, ChevronDown,
 } from "lucide-react";
+import Link from "next/link";
 
 type Tab = "health" | "merchants" | "kyc" | "disputes" | "fraud-rules" | "investigation" | "ledger-adjust" | "rate-limit";
 
@@ -152,6 +153,16 @@ export default function AdminPage() {
     { id: "rate-limit" as Tab, label: "Rate Limits", icon: Ban },
   ];
 
+  const observabilityLink = (
+    <Link
+      href="/observability"
+      className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-slate-700 transition-colors"
+    >
+      <Activity size={16} />
+      Observability
+    </Link>
+  );
+
   return (
     <div className="min-h-screen bg-slate-900 text-gray-100">
       <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur-sm sticky top-0 z-50">
@@ -164,6 +175,12 @@ export default function AdminPage() {
           </div>
           <div className="flex items-center gap-3">
             <Badge variant="neutral" className="text-xs">Internal</Badge>
+            <a
+              href="/observability"
+              className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+            >
+              <Activity className="w-3 h-3" /> Observability
+            </a>
             <Button
               variant="ghost"
               size="sm"
@@ -196,6 +213,7 @@ export default function AdminPage() {
               </button>
             );
           })}
+          {observabilityLink}
         </div>
 
         {tab === "health" && (

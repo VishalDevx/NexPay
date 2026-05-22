@@ -86,12 +86,29 @@ export const paymentService = {
       }
 
       if (scenario.status === "FAILED") {
-        return paymentRepo.transition({
+        const failed = await paymentRepo.transition({
           paymentId: payment.id,
           toStatus: PaymentStatus.FAILED,
           actor: "system",
           reason: "Sandbox test card decline",
         });
+
+        metrics.incrementCounter("payment_failure_total", { reason: "sandbox_decline" });
+
+        await outboxService.createEvent({
+          eventType: "payment.failed",
+          aggregateType: "payment",
+          aggregateId: payment.id,
+          payload: {
+            merchantId: input.merchantId,
+            amount: input.amount,
+            currency: input.currency,
+            status: "FAILED",
+            reason: "Sandbox test card decline",
+          },
+        }).catch((err) => console.error("[Outbox] Failed to create event:", err.message));
+
+        return failed;
       }
 
       await paymentRepo.transition({
@@ -211,6 +228,25 @@ export const paymentService = {
       reason: "Payment captured",
     });
 
+    const pm = input.paymentMethod;
+    metrics.incrementCounter("payment_success_total", {
+      currency: input.currency,
+      payment_method: pm?.type || "unknown",
+    });
+
+    await outboxService.createEvent({
+      eventType: "payment.captured",
+      aggregateType: "payment",
+      aggregateId: payment.id,
+      payload: {
+        merchantId: input.merchantId,
+        amount: input.amount,
+        currency: input.currency,
+        status: "CAPTURED",
+        paymentMethod: pm,
+      },
+    }).catch((err) => console.error("[Outbox] Failed to create event:", err.message));
+
     const accounts = await ledgerRepo.getOrCreateAccounts(input.merchantId, input.currency);
     await doubleEntryBook({
       debitAccountId: accounts.assetAccount.id,
@@ -276,6 +312,23 @@ export const paymentService = {
     }).catch((err) => console.error("GL entry failed (non-blocking):", err.message));
 
     await applyRollingReserve(payment.merchantId, payment.id, payment.amount.toFixed(DECIMAL_PRECISION)).catch((err) => console.error("Rolling reserve failed (non-blocking):", err.message));
+
+    metrics.incrementCounter("payment_success_total", {
+      currency: payment.currency,
+      payment_method: (payment.paymentMethod as any)?.type || "unknown",
+    });
+
+    await outboxService.createEvent({
+      eventType: "payment.captured",
+      aggregateType: "payment",
+      aggregateId: payment.id,
+      payload: {
+        merchantId: payment.merchantId,
+        amount: payment.amount.toFixed(DECIMAL_PRECISION),
+        currency: payment.currency,
+        status: "CAPTURED",
+      },
+    }).catch((err) => console.error("[Outbox] Failed to create event:", err.message));
 
     return updated;
   },
@@ -392,6 +445,26 @@ export const paymentService = {
           }).catch((err) => console.error("GL reserve refund entry failed (non-blocking):", err.message));
         }
       }
+
+      const refundEventType = isFullRefund ? "payment.refunded" : "payment.partially_refunded";
+
+      metrics.incrementCounter("payment_success_total", {
+        currency: payment.currency,
+        payment_method: (payment.paymentMethod as any)?.type || "unknown",
+      });
+
+      await outboxService.createEvent({
+        eventType: refundEventType,
+        aggregateType: "payment",
+        aggregateId: payment.id,
+        payload: {
+          merchantId: payment.merchantId,
+          amount: refundAmount.toFixed(DECIMAL_PRECISION),
+          currency: payment.currency,
+          status: isFullRefund ? "REFUNDED" : payment.status,
+          refundId: refund.id,
+        },
+      }).catch((err) => console.error("[Outbox] Failed to create event:", err.message));
 
       return refund;
     });

@@ -8,6 +8,16 @@ export function metricsMiddleware(req: Request, res: Response, next: NextFunctio
   }
 
   const start = Date.now();
+  const chunks: Buffer[] = [];
+  const originalJson = res.json.bind(res);
+
+  res.json = function (body: any) {
+    if (body && typeof body === "object") {
+      const serialized = JSON.stringify(body);
+      chunks.push(Buffer.from(serialized));
+    }
+    return originalJson(body);
+  };
 
   res.on("finish", () => {
     const duration = Date.now() - start;
@@ -26,6 +36,27 @@ export function metricsMiddleware(req: Request, res: Response, next: NextFunctio
     }
 
     metrics.setGauge("error_rate", calculateErrorRate());
+
+    const merchantId = (req as any).merchant?.id;
+    if (merchantId) {
+      let responseBody: any = undefined;
+      if (chunks.length > 0) {
+        try {
+          responseBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {}
+      }
+      metrics.recordApiLog({
+        id: (req.headers["x-request-id"] as string) || uuidv4(),
+        merchantId,
+        method,
+        path,
+        status: res.statusCode,
+        duration,
+        requestBody: (req as any).body,
+        responseBody,
+        timestamp: new Date(),
+      });
+    }
   });
 
   next();

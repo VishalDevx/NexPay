@@ -1,7 +1,21 @@
+interface ApiLogEntry {
+  id: string;
+  merchantId: string;
+  method: string;
+  path: string;
+  status: number;
+  duration: number;
+  requestBody?: any;
+  responseBody?: any;
+  timestamp: Date;
+}
+
 export class MetricsCollector {
   private counters: Map<string, number> = new Map();
   private histograms: Map<string, number[]> = new Map();
   private gauges: Map<string, number> = new Map();
+  private apiLogs: ApiLogEntry[] = [];
+  private readonly maxApiLogs = 5000;
 
   private key(name: string, tags?: Record<string, string>): string {
     if (!tags || Object.keys(tags).length === 0) return name;
@@ -74,10 +88,25 @@ export class MetricsCollector {
     return { counters, histograms, gauges };
   }
 
+  recordApiLog(entry: ApiLogEntry): void {
+    this.apiLogs.push(entry);
+    if (this.apiLogs.length > this.maxApiLogs) {
+      this.apiLogs.shift();
+    }
+  }
+
+  getApiLogs(merchantId: string, limit = 100, offset = 0): ApiLogEntry[] {
+    return this.apiLogs
+      .filter((l) => l.merchantId === merchantId)
+      .reverse()
+      .slice(offset, offset + limit);
+  }
+
   reset(): void {
     this.counters.clear();
     this.histograms.clear();
     this.gauges.clear();
+    this.apiLogs = [];
   }
 
   toPrometheus(): string {

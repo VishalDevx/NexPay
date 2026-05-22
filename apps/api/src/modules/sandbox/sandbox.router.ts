@@ -3,6 +3,7 @@ import { prisma } from "../../config/db";
 import { redis } from "../../config/redis";
 import { randomUUID } from "crypto";
 import * as chaos from "./chaos-simulator";
+import { webhookService } from "../webhooks/webhook.service";
 
 const router = Router();
 
@@ -91,6 +92,161 @@ router.post("/events", async (req: Request, res: Response) => {
     res.json({ simulated: true, event, paymentId: targetPaymentId, result });
   } catch (err: any) {
     res.status(422).json({ error: "simulation_failed", message: err.message });
+  }
+});
+
+const SAMPLE_PAYLOADS: Record<string, any> = {
+  "payment.captured": {
+    amount: 2500,
+    currency: "USD",
+    status: "CAPTURED",
+    customer: { email: "test@example.com", name: "Test Customer" },
+    paymentMethod: "card",
+  },
+  "payment.failed": {
+    amount: 1500,
+    currency: "USD",
+    status: "FAILED",
+    failureReason: "insufficient_funds",
+    customer: { email: "test@example.com" },
+  },
+  "payment.refunded": {
+    amount: 2500,
+    currency: "USD",
+    status: "REFUNDED",
+    refundAmount: 2500,
+    refundReason: "customer_request",
+    customer: { email: "test@example.com" },
+  },
+  "dispute.created": {
+    amount: 2500,
+    currency: "USD",
+    disputeReason: "fraudulent",
+    customer: { email: "test@example.com" },
+  },
+  "dispute.resolved": {
+    amount: 2500,
+    currency: "USD",
+    disputeStatus: "RESOLVED_MERCHANT_LOST",
+    customer: { email: "test@example.com" },
+  },
+  "payout.paid": {
+    amount: 50000,
+    currency: "USD",
+    status: "COMPLETED",
+    bankReference: "SANDBOX-REF-001",
+  },
+  "payout.failed": {
+    amount: 50000,
+    currency: "USD",
+    status: "FAILED",
+    failureReason: "bank_account_invalid",
+  },
+};
+
+router.post("/trigger-webhook", async (req: Request, res: Response) => {
+  try {
+    const { eventType, payload } = req.body;
+    const merchantId = req.merchant!.id;
+
+    if (!eventType) {
+      return res.status(400).json({ error: "missing_event_type", message: "eventType is required" });
+    }
+
+    const validEvents = [
+      "payment.captured", "payment.failed", "payment.refunded",
+      "dispute.created", "dispute.resolved",
+      "payout.paid", "payout.failed",
+    ];
+    if (!validEvents.includes(eventType)) {
+      return res.status(400).json({
+        error: "invalid_event_type",
+        message: `eventType must be one of: ${validEvents.join(", ")}`,
+      });
+    }
+
+    const samplePayload = SAMPLE_PAYLOADS[eventType] || {};
+    const webhookPayload = payload || samplePayload;
+
+    const sandboxPayment = await prisma.payment.create({
+      data: {
+        merchantId,
+        amount: webhookPayload.amount || 1000,
+        currency: webhookPayload.currency || "USD",
+        status: "CAPTURED",
+        metadata: { sandbox: true, simulated: true, eventType },
+      },
+    });
+
+    const endpoints = await prisma.webhookEndpoint.findMany({
+      where: { merchantId, enabled: true },
+    });
+
+    const deliveries: any[] = [];
+    const errors: string[] = [];
+
+    for (const endpoint of endpoints) {
+      const events = endpoint.events as string[];
+      if (!events.includes(eventType) && !events.includes("*")) {
+        errors.push(`Endpoint ${endpoint.id}: does not listen to ${eventType}`);
+        continue;
+      }
+
+      const deliveryPayload = { event: eventType, data: webhookPayload, timestamp: new Date().toISOString() };
+
+      const delivery = await prisma.webhookDelivery.create({
+        data: {
+          endpointId: endpoint.id,
+          paymentId: sandboxPayment.id,
+          payload: deliveryPayload,
+          status: "PENDING",
+          maxRetries: 5,
+        },
+      });
+
+      const { webhookQueue } = await import("../webhooks/webhook.service");
+      await webhookQueue.add(
+        `webhook:sandbox:${delivery.id}`,
+        { deliveryId: delivery.id, endpointId: endpoint.id, payload: deliveryPayload, secretHash: endpoint.secretHash },
+        { jobId: `sandbox:${delivery.id}`, attempts: 1 }
+      );
+
+      deliveries.push({
+        deliveryId: delivery.id,
+        endpointId: endpoint.id,
+        endpointUrl: endpoint.url,
+        status: "PENDING",
+      });
+    }
+
+    const timing = { startTime: new Date().toISOString() };
+
+    let deliveryResult: any;
+    if (deliveries.length > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const updated = await prisma.webhookDelivery.findMany({
+        where: { id: { in: deliveries.map((d) => d.deliveryId) } },
+      });
+      deliveryResult = updated.map((d) => ({
+        id: d.id,
+        status: d.status,
+        attempts: d.attempts,
+        httpStatus: (d.payload as any)?.httpStatus || null,
+      }));
+    }
+
+    res.json({
+      simulated: true,
+      eventType,
+      paymentId: sandboxPayment.id,
+      endpointCount: endpoints.length,
+      matchedEndpoints: deliveries.length,
+      deliveries: deliveryResult || deliveries,
+      timing: { ...timing, endTime: new Date().toISOString() },
+      errors: errors.length > 0 ? errors : undefined,
+    });
+  } catch (err: any) {
+    res.status(422).json({ error: "webhook_trigger_failed", message: err.message });
   }
 });
 
