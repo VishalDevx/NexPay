@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:seed": "npx prisma db seed",
+    "prisma:seed": "npx prisma db seed",
+    "seed:demo": "npx tsx prisma/seed.ts",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
