@@ -451,7 +451,7 @@ async function main() {
   // Write wallet transactions
   const walletAmount = totalProcessed - totalRefunded;
   await prisma.walletTxn.create({
-    data: { walletId: wallet.id, type: "SETTLEMENT", amount: walletAmount, refId: `GOLDEN_SEED_${Date.now()}`, refType: "PAYMENT", createdAt: new Date() },
+    data: { walletId: wallet.id, type: "PAYMENT_IN", amount: walletAmount, refId: `GOLDEN_SEED_${Date.now()}`, refType: "PAYMENT", createdAt: new Date() },
   });
   await prisma.wallet.update({ where: { id: wallet.id }, data: { lastReconciledAt: new Date() } });
 
