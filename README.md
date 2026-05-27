@@ -100,7 +100,7 @@ Customer pays ₹1,000
 nexpay/
 ├── apps/
 │   ├── api/                  # Express REST API (40+ routers)
-│   │   ├── prisma/           # Schema + seed
+│   │   ├── prisma/           # Schema + seed (standard + golden)
 │   │   ├── src/
 │   │   │   ├── config/       # DB, Redis, env config
 │   │   │   ├── middleware/   # Auth, rate-limit, idempotency, metrics, sandbox
@@ -200,20 +200,46 @@ The admin dashboard includes a **System Integrity** tab that monitors:
 
 ## Demo: End-to-End Money Flow
 
+Two seed options:
+
 ```bash
-# Seed the golden demo merchant
+# A) Full demo (5 merchants, 510 payments, all features)
 npm run seed:demo
 
-# This creates:
-# - 1 admin, 5 merchants
-# - 25 customers
-# - 510 payments with various statuses
-# - 25 refunds, 25 disputes
-# - 7 payouts, 7 invoices
-# - Webhook events, ledger entries, GL entries
-# - 4 settlement batches
-# - Daily balances (31 days)
-# - Reconciliation runs with matches
+# B) Golden demo — single merchant, deterministic money flow (recommended for demos)
+npm run seed:golden
+```
+
+### Golden Demo (`npm run seed:golden`)
+
+Creates **Acme Corp** (`merchant@nexpay.dev` / `demo1234`) with a complete, verifiable money flow:
+
+| Step | What happens | Amount |
+|------|-------------|--------|
+| Payment #1 | Alice buys a T-shirt → captured → settled | $100.00 |
+| Payment #2 | Alice buys headphones → captured → settled | $250.00 |
+| Payment #3 | Bob buys a keyboard → settled → **$150 refunded** | $500.00 |
+| Payment #4 | Bob buys a USB hub → settled → **disputed → merchant wins** | $75.00 |
+| Payment #5 | Alice buys a monitor → captured → settled | $1,000.00 |
+
+**What gets created:**
+- 5 payments with full state machine transitions
+- Double-entry ledger (asset, liability, revenue) — debit = credit invariant
+- Wallet credited with net settlements
+- Outbox events + webhook deliveries for each payment
+- 1 refund with ledger reversal
+- 1 resolved dispute
+- Settlement batch with reconciliation matches
+- 31 daily balance records
+- API keys (live + test), bank account, webhook endpoint
+- Fee schedule, reserve config (10% rolling reserve)
+
+**Verifiable totals:**
+- Total processed: **$1,925.00**
+- Total fees: **$58.05** (2.9% + $0.30 per transaction)
+- Total refunded: **$150.00**
+- Net merchant payable: **$1,716.95**
+- Ledger: debit = credit ✅
 ```
 
 ## API Quick Start
