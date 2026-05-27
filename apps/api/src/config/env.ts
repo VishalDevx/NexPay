@@ -13,6 +13,7 @@ const envSchema = z.object({
   FX_API_URL: z.string().url().default("https://api.exchangerate-api.com/v4/latest/USD"),
   FX_API_KEY: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
+  BYPASS_OTP: z.coerce.boolean().default(false),
 });
 
 export const env = envSchema.parse(process.env);
