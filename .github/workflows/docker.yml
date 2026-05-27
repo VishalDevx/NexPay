@@ -1,0 +1,47 @@
+name: Docker Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-images:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - context: .
+            dockerfile: apps/api/Dockerfile
+            image: nexpay-api
+          - context: .
+            dockerfile: apps/merchant-portal/Dockerfile
+            image: nexpay-merchant-portal
+          - context: .
+            dockerfile: apps/admin-portal/Dockerfile
+            image: nexpay-admin-portal
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache/${{ matrix.image }}
+          key: ${{ runner.os }}-buildx-${{ matrix.image }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-${{ matrix.image }}-
+
+      - name: Build ${{ matrix.image }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: false
+          tags: ${{ matrix.image }}:latest
+          cache-from: type=local,src=/tmp/.buildx-cache/${{ matrix.image }}
+          cache-to: type=local,dest=/tmp/.buildx-cache/${{ matrix.image }},mode=max

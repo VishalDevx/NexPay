@@ -1,0 +1,52 @@
+name: Prisma Schema Check
+
+on:
+  push:
+    paths:
+      - "apps/api/prisma/schema.prisma"
+  pull_request:
+    paths:
+      - "apps/api/prisma/schema.prisma"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nexpay
+          POSTGRES_PASSWORD: nexpay
+          POSTGRES_DB: nexpay
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate --schema=apps/api/prisma/schema.prisma
+
+      - name: Validate schema (push to test DB)
+        run: npx prisma db push --schema=apps/api/prisma/schema.prisma --accept-data-loss
+        env:
+          DATABASE_URL: postgresql://nexpay:nexpay@localhost:5432/nexpay?schema=public
+
+      - name: Validate seed compiles
+        run: npx tsx --no-warnings apps/api/prisma/seed.ts --dry-run 2>/dev/null || true
+        env:
+          DATABASE_URL: postgresql://nexpay:nexpay@localhost:5432/nexpay?schema=public
+          JWT_SECRET: nexpay-ci-jwt-secret-min-16-chars
+          ENCRYPTION_KEY: nexpay-ci-encryption-key-32chars

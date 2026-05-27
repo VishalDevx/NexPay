@@ -10,11 +10,12 @@ import { Select } from "@/components/ui/select";
 import {
   Shield, Users, FileText, Activity, AlertTriangle, CheckCircle, XCircle,
   Search, Ban, Sliders, Eye, RefreshCw, DollarSign, Clock, Server,
-  Database, Globe, Lock, Unlock, Plus, Save, ChevronDown,
+  Database, Globe, Lock, Unlock, Plus, Save, ChevronDown, BarChart3,
+  Layers, Webhook, Wallet, PieChart,
 } from "lucide-react";
 import Link from "next/link";
 
-type Tab = "health" | "merchants" | "kyc" | "disputes" | "fraud-rules" | "investigation" | "ledger-adjust" | "rate-limit";
+type Tab = "health" | "merchants" | "kyc" | "disputes" | "fraud-rules" | "investigation" | "ledger-adjust" | "rate-limit" | "integrity";
 
 const defaultHealth = {
   api: "healthy", database: "healthy", redis: "healthy",
