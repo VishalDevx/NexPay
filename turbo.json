@@ -4,7 +4,19 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**"]
+      "outputs": ["dist/**", ".next/**"],
+      "env": [
+        "DATABASE_URL",
+        "REDIS_URL",
+        "JWT_SECRET",
+        "ENCRYPTION_KEY",
+        "NODE_ENV",
+        "PORT",
+        "BYPASS_OTP",
+        "FX_API_URL",
+        "FX_API_KEY",
+        "RESEND_API_KEY"
+      ]
     },
     "lint": {},
     "typecheck": {},
