@@ -45,8 +45,12 @@ services:
       DATABASE_URL: postgresql://nexpay:${DB_PASSWORD:-nexpay}@postgres:5432/nexpay?schema=public
       REDIS_URL: redis://redis:6379
       NODE_ENV: production
+      PORT: "3001"
       JWT_SECRET: ${JWT_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      FX_API_URL: ${FX_API_URL:-https://api.exchangerate-api.com/v4/latest/USD}
+      FX_API_KEY: ${FX_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

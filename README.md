@@ -116,6 +116,7 @@ nexpay/
 ├── docs/
 │   ├── ARCHITECTURE.md       # System architecture
 │   ├── FAILURE_MODES.md      # Failure handling documentation
+│   ├── SECRETS.md            # GitHub Secrets & env configuration
 │   └── TENANCY.md            # Multi-tenancy design
 ├── .github/workflows/        # CI/CD pipelines
 └── docker-compose.yml        # Local dev setup
@@ -129,19 +130,24 @@ nexpay/
 # 1. Start infrastructure
 docker compose up -d postgres redis
 
-# 2. Install dependencies
+# 2. Configure environment
+cp .env.example .env
+# Edit .env — set JWT_SECRET and ENCRYPTION_KEY (min 16 chars each)
+# See docs/SECRETS.md for details
+
+# 3. Install dependencies
 npm ci
 
-# 3. Generate Prisma client
+# 5. Generate Prisma client
 npm run db:generate
 
-# 4. Run migrations
+# 6. Run migrations
 npm run db:migrate
 
-# 5. Seed demo data
+# 7. Seed demo data
 npm run seed:demo
 
-# 6. Start development
+# 8. Start development
 npm run dev
 ```
 
