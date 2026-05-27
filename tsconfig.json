@@ -13,5 +13,5 @@
     "sourceMap": true,
     "moduleResolution": "node"
   },
-  "exclude": ["node_modules", "dist", ".turbo"]
+  "exclude": ["node_modules", "dist", ".turbo", "e2e", "e2e-report"]
 }

@@ -1,22 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { loginAsMerchant, createTestPayment } from "./helpers";
-import type { APIRequestContext } from "@playwright/test";
 
 test.describe("Payment Capture Flow", () => {
-  let apiRequest: APIRequestContext;
-  let paymentId: string;
-
-  test.beforeAll(async ({ request }) => {
-    apiRequest = request;
-    const api = await loginAsMerchant(request);
-    const payment = await createTestPayment(api, {
-      amount: 2500,
-      currency: "USD",
-      description: "E2E capture test payment",
-    });
-    paymentId = payment.id;
-  });
-
   test("transactions page shows payment list", async ({ page }) => {
     await page.goto("/login");
     await page.getByPlaceholder(/you@company\.com/i).fill("merchant@nexpay.dev");
