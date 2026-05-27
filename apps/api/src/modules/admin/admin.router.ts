@@ -164,4 +164,7 @@ router.get("/health", async (req: Request, res: Response) => {
   });
 });
 
+import integrityRouter from "./integrity.router";
+router.use(integrityRouter);
+
 export default router;
