@@ -27,6 +27,23 @@ const defaultHealth = {
   lastReconciliation: new Date().toISOString(),
 };
 
+function CheckCard({ label, ok, detail, icon: Icon }: { label: string; ok: boolean; detail: string; icon: any }) {
+  return (
+    <Card className={`bg-slate-800 border-slate-700 ${!ok ? "ring-1 ring-amber-500/50" : ""}`}>
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Icon size={16} className={ok ? "text-emerald-400" : "text-amber-400"} />
+            <span className="text-sm font-medium text-gray-200">{label}</span>
+          </div>
+          {ok ? <CheckCircle size={16} className="text-emerald-400" /> : <XCircle size={16} className="text-amber-400" />}
+        </div>
+        <p className="text-xs text-gray-500 truncate">{detail}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AdminPage() {
   const [tab, setTab] = useState<Tab>("health");
   const [merchants, setMerchants] = useState<any[]>([]);
@@ -34,6 +51,8 @@ export default function AdminPage() {
   const [fraudRules, setFraudRules] = useState<any[]>([]);
   const [health, setHealth] = useState<any>(defaultHealth);
   const [rateLimits, setRateLimits] = useState<any[]>([]);
+  const [integrity, setIntegrity] = useState<any>(null);
+  const [integrityLoading, setIntegrityLoading] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPass, setLoginPass] = useState("");
@@ -73,6 +92,10 @@ export default function AdminPage() {
     if (tab === "merchants" || tab === "kyc") adminFetch("/api/v1/admin/merchants").then((d) => setMerchants(d.data || []));
     if (tab === "disputes") adminFetch("/api/v1/admin/disputes").then((d) => setDisputes(d.data || []));
     if (tab === "fraud-rules") adminFetch("/api/v1/admin/fraud-rules").then((d) => setFraudRules(d.data || []));
+    if (tab === "integrity") {
+      setIntegrityLoading(true);
+      adminFetch("/api/v1/admin/integrity").then((d) => { setIntegrity(d); setIntegrityLoading(false); });
+    }
   }, [tab, token]);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -152,6 +175,7 @@ export default function AdminPage() {
     { id: "fraud-rules" as Tab, label: "Fraud Rules", icon: AlertTriangle },
     { id: "ledger-adjust" as Tab, label: "Ledger Adjust", icon: DollarSign },
     { id: "rate-limit" as Tab, label: "Rate Limits", icon: Ban },
+    { id: "integrity" as Tab, label: "Integrity", icon: BarChart3 },
   ];
 
   const observabilityLink = (
@@ -662,6 +686,89 @@ export default function AdminPage() {
                 </Table>
               </CardContent>
             </Card>
+          </div>
+        )}
+
+        {tab === "integrity" && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-blue-400" />
+                System Integrity
+              </h2>
+              <Badge variant={integrity?.status === "healthy" ? "success" : integrity?.status === "degraded" ? "warning" : "neutral"} className="text-xs">
+                {integrity ? (integrity.status === "healthy" ? "All Systems Healthy" : "Degraded") : "Checking..."}
+              </Badge>
+            </div>
+
+            {integrityLoading ? (
+              <Card className="bg-slate-800 border-slate-700">
+                <CardContent className="p-12 text-center text-gray-500">Running system integrity checks...</CardContent>
+              </Card>
+            ) : integrity ? (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <CheckCard label="Ledger Balanced" ok={integrity.checks.ledgerBalanced.ok} detail={integrity.checks.ledgerBalanced.message} icon={Layers} />
+                  <CheckCard label="Wallet vs Ledger" ok={integrity.checks.walletDrift.ok} detail={integrity.checks.walletDrift.drifts?.length ? `${integrity.checks.walletDrift.drifts.length} wallet(s) have drift` : "All match"} icon={Wallet} />
+                  <CheckCard label="Webhook Deliveries" ok={integrity.checks.pendingWebhookDeliveries.ok} detail={`${integrity.checks.pendingWebhookDeliveries.pending} pending, ${integrity.checks.pendingWebhookDeliveries.retrying} retrying`} icon={Webhook} />
+                  <CheckCard label="Dead Letter Queue" ok={integrity.checks.dlqCount.ok} detail={`${integrity.checks.dlqCount.count} in DLQ`} icon={XCircle} />
+                  <CheckCard label="Reconciliation Issues" ok={integrity.checks.reconciliationIssues.ok} detail={`${integrity.checks.reconciliationIssues.open} open, ${integrity.checks.reconciliationIssues.escalated} escalated`} icon={PieChart} />
+                  <CheckCard label="Outbox Lag" ok={integrity.checks.outboxLag.ok} detail={`${integrity.checks.outboxLag.pending} pending, ${integrity.checks.outboxLag.failed} failed`} icon={Activity} />
+                  <CheckCard label="Failed Jobs" ok={integrity.checks.failedJobs.ok} detail={`${integrity.checks.failedJobs.failedPayouts} failed payouts, ${integrity.checks.failedJobs.failedDeliveries} failed deliveries`} icon={AlertTriangle} />
+                  <CheckCard label="Payment Success Rate" ok={integrity.checks.paymentSuccessRate.ok} detail={`${integrity.checks.paymentSuccessRate.rate}% success (${integrity.checks.paymentSuccessRate.success}/${integrity.checks.paymentSuccessRate.total})`} icon={BarChart3} />
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {integrity.checks.walletDrift.drifts?.length > 0 && (
+                    <Card className="bg-slate-800 border-slate-700">
+                      <CardHeader><CardTitle className="text-white text-sm flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-400" /> Wallet Drift Details</CardTitle></CardHeader>
+                      <CardContent>
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="border-slate-700">
+                              <TableHead className="text-gray-400 text-xs">Merchant</TableHead>
+                              <TableHead className="text-gray-400 text-xs">Currency</TableHead>
+                              <TableHead className="text-gray-400 text-xs">Wallet</TableHead>
+                              <TableHead className="text-gray-400 text-xs">Ledger</TableHead>
+                              <TableHead className="text-gray-400 text-xs">Drift</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {integrity.checks.walletDrift.drifts.map((d: any, i: number) => (
+                              <TableRow key={i} className="border-slate-700">
+                                <TableCell className="text-xs text-gray-300">{d.merchantId?.slice(0, 12)}</TableCell>
+                                <TableCell className="text-xs text-gray-300">{d.currency}</TableCell>
+                                <TableCell className="text-xs font-mono text-white">{d.walletBalance}</TableCell>
+                                <TableCell className="text-xs font-mono text-white">{d.ledgerBalance}</TableCell>
+                                <TableCell className="text-xs font-mono text-red-400">{d.drift}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  <Card className="bg-slate-800 border-slate-700">
+                    <CardHeader><CardTitle className="text-white text-sm flex items-center gap-2"><Clock className="w-4 h-4" /> Job Timing</CardTitle></CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex justify-between items-center py-2 border-b border-slate-700">
+                        <span className="text-sm text-gray-300">Last Reconciliation</span>
+                        <span className="text-sm text-gray-400">{integrity.checks.lastReconciliation.lastRun ? new Date(integrity.checks.lastReconciliation.lastRun).toLocaleString() : "Never"}</span>
+                      </div>
+                      <div className="flex justify-between items-center py-2 border-b border-slate-700">
+                        <span className="text-sm text-gray-300">Last Cron (Reconciliation)</span>
+                        <span className="text-sm text-gray-400">{integrity.checks.lastCronRuns.reconciliation !== "never" ? new Date(integrity.checks.lastCronRuns.reconciliation).toLocaleString() : "Never"}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </>
+            ) : (
+              <Card className="bg-slate-800 border-slate-700">
+                <CardContent className="p-12 text-center text-gray-500">Unable to load integrity data. Check API connectivity.</CardContent>
+              </Card>
+            )}
           </div>
         )}
       </div>

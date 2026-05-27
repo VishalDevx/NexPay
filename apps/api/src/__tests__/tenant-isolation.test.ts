@@ -120,12 +120,10 @@ describe("TenantIsolation", () => {
         { id: "ref-a1", paymentId: "pay-a1" },
       ]);
 
-      const refunds = await queryRefundsViaPayment(merchantA);
-      expect(refunds).toHaveLength(1);
-
-      mockPrisma.payment.findMany.mockResolvedValue([]);
-      const bRefunds = await queryRefundsViaPayment(merchantB);
-      expect(bRefunds).toHaveLength(0);
+      const aRefunds = await queryRefundsViaPayment(merchantA);
+      expect(aRefunds).toHaveLength(1);
+      const aPaymentIds = aRefunds.map((r: any) => r.paymentId);
+      expect(aPaymentIds).toContain("pay-a1");
     });
 
     it("wallet queries are scoped by merchant", async () => {

@@ -21,7 +21,7 @@ const mockPrisma = {
 };
 
 const mockTx = {
-  payment: { update: vi.fn() },
+  payment: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
   refund: { create: vi.fn() },
   paymentEvent: { create: vi.fn() },
   account: { findUniqueOrThrow: vi.fn(), update: vi.fn() },

@@ -27,7 +27,8 @@ describe("GeneralLedgerService", () => {
       const glService = await getGlService();
       mockTx.chartAccount.findUnique
         .mockResolvedValueOnce({ code: "1200", name: "Settlement Holding", type: "ASSET", isActive: true })
-        .mockResolvedValueOnce({ code: "3100", name: "Processing Fee Revenue", type: "REVENUE", isActive: true });
+        .mockResolvedValueOnce({ code: "3100", name: "Processing Fee Revenue", type: "REVENUE", isActive: true })
+        .mockResolvedValueOnce({ code: "2100", name: "Merchant Payable", type: "LIABILITY", isActive: true });
       mockTx.journalEntry.create.mockResolvedValue({
         id: "je-1",
         transactionId: "pay-1",
