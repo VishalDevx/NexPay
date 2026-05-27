@@ -38,6 +38,7 @@ export const payoutWorker = new Worker(
             payoutId,
             paymentId: p.id,
             amount: p.amount,
+            netAmount: p.amount,
           },
         })
       )

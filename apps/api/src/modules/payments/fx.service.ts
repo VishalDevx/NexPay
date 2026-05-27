@@ -1,5 +1,5 @@
-import { env } from "../config/env";
-import { redis } from "../config/redis";
+import { env } from "../../config/env";
+import { redis } from "../../config/redis";
 
 interface FXRate {
   base: string;
@@ -12,7 +12,7 @@ const CACHE_TTL = 3600;
 async function fetchRates(base: string = "USD"): Promise<FXRate> {
   const cacheKey = `fx:rates:${base}`;
   const cached = await redis.get(cacheKey);
-  if (cached) return JSON.parse(cached);
+  if (cached) return JSON.parse(cached) as FXRate;
 
   const response = await fetch(`${env.FX_API_URL}?base=${base}`, {
     signal: AbortSignal.timeout(5000),
@@ -20,7 +20,7 @@ async function fetchRates(base: string = "USD"): Promise<FXRate> {
 
   if (!response.ok) throw new Error(`FX API error: ${response.status}`);
 
-  const data: FXRate = await response.json();
+  const data = await response.json() as FXRate;
   await redis.set(cacheKey, JSON.stringify(data), "EX", CACHE_TTL);
   return data;
 }

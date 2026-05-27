@@ -2,13 +2,16 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import cron from "node-cron";
+import pinoHttp from "pino-http";
 import { env } from "./config/env";
 import { prisma } from "./config/db";
+import { logger } from "./config/logger";
 
 import { authMiddleware } from "./middleware/auth";
 import { idempotencyMiddleware } from "./middleware/idempotency";
 import { rateLimitMiddleware } from "./middleware/rate-limit";
 import { sandboxMiddleware } from "./middleware/sandbox";
+import { requestIdMiddleware } from "./middleware/request-id";
 
 import paymentRouter from "./modules/payments/payment.router";
 import customerRouter from "./modules/payments/customers.router";
@@ -56,6 +59,7 @@ import { runBilling } from "./workers/billing.worker";
 import { outboxWorker } from "./workers/outbox.worker";
 
 import { metricsMiddleware } from "./middleware/metrics";
+import { metrics } from "./modules/metrics/metrics";
 import metricsRouter from "./modules/metrics/metrics.router";
 import outboxRouter from "./modules/outbox/outbox.router";
 
@@ -64,13 +68,15 @@ const app = express();
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
-app.use(rateLimitMiddleware);
+app.use(requestIdMiddleware);
+app.use(pinoHttp({ logger }));
 
+app.use(rateLimitMiddleware);
 app.use(metricsMiddleware);
 
-app.use((req: any, _res, next) => {
-  console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
-  next();
+app.get("/metrics", (_req, res) => {
+  res.set("Content-Type", "text/plain; charset=utf-8");
+  res.send(metrics.toPrometheus());
 });
 
 app.get("/api/v1/health", (_req, res) => {
@@ -127,33 +133,32 @@ app.use("/api/v1/gateway", gatewayRouter);
 app.use("/api/v1/integrations", integrationsRouter);
 app.use("/api/v1/sandbox", sandboxRouter);
 
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error("Unhandled error:", err);
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  logger.error({ err, requestId: req.requestId }, "Unhandled error");
   res.status(500).json({ error: "internal_server_error", message: "An unexpected error occurred" });
 });
 
 cron.schedule("0 2 * * *", () => {
-  console.log("[Cron] Starting daily reconciliation...");
-  runReconciliation().catch(console.error);
+  logger.info("Starting daily reconciliation");
+  runReconciliation().catch((err) => logger.error({ err }, "Reconciliation cron failed"));
 });
 
 cron.schedule("*/30 * * * *", () => {
-  console.log("[Cron] Running fraud unblock cleanup...");
-  runFraudUnblock().catch(console.error);
+  logger.info("Running fraud unblock cleanup");
+  runFraudUnblock().catch((err) => logger.error({ err }, "Fraud unblock cron failed"));
 });
 
 cron.schedule("0 3 1 * *", () => {
-  console.log("[Cron] Starting monthly billing invoicing...");
-  runBilling().catch(console.error);
+  logger.info("Starting monthly billing invoicing");
+  runBilling().catch((err) => logger.error({ err }, "Billing cron failed"));
 });
 
 const server = app.listen(env.PORT, () => {
-  console.log(`NexPay API running on port ${env.PORT}`);
-  console.log(`Environment: ${env.NODE_ENV}`);
+  logger.info({ port: env.PORT, env: env.NODE_ENV }, "NexPay API started");
 });
 
 process.on("SIGTERM", async () => {
-  console.log("Shutting down gracefully...");
+  logger.info("Shutting down gracefully");
   await webhookWorker.close();
   await payoutWorker.close();
   outboxWorker.stop();
@@ -163,7 +168,7 @@ process.on("SIGTERM", async () => {
 });
 
 process.on("SIGINT", async () => {
-  console.log("Shutting down gracefully...");
+  logger.info("Shutting down gracefully");
   await webhookWorker.close();
   await payoutWorker.close();
   outboxWorker.stop();

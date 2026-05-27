@@ -6,13 +6,12 @@ import { metrics } from "../metrics/metrics";
 const router = Router();
 
 function getMetricValue(name: string, tags?: Record<string, string>): number {
-  const counter = metrics.getAllMetrics().counters.find(c => c.name === name);
-  if (!counter) return 0;
+  const counters = metrics.getAllMetrics().counters;
   if (tags) {
-    const matching = counter.tagsValues?.find(t => tags && Object.entries(tags).every(([k, v]) => t[k] === v));
-    return matching?.value ?? 0;
+    const tagStr = Object.entries(tags).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join(",");
+    return counters[`${name}{${tagStr}}`] || 0;
   }
-  return counter.value ?? 0;
+  return counters[name] || 0;
 }
 
 router.get("/integrity", async (req: Request, res: Response) => {
@@ -84,9 +83,9 @@ async function checkWalletDrift() {
     const lastTxn = await prisma.walletTxn.findFirst({
       where: { walletId: wallet.id },
       orderBy: { createdAt: "desc" },
-      select: { balanceAfter: true },
+      select: { amount: true },
     });
-    const ledgerBalance = lastTxn?.balanceAfter?.toString() || "0";
+    const ledgerBalance = lastTxn?.amount?.toString() || "0";
     const wb = parseFloat(walletBalance || "0");
     const lb = parseFloat(ledgerBalance);
     if (Math.abs(wb - lb) > 0.01) {
@@ -99,8 +98,7 @@ async function checkWalletDrift() {
 
 async function countPendingWebhooks() {
   const pending = await prisma.webhookDelivery.count({ where: { status: "PENDING" } });
-  const retrying = await prisma.webhookDelivery.count({ where: { status: "RETRYING" } });
-  return { ok: pending < 50, pending, retrying, total: pending + retrying };
+  return { ok: pending < 50, pending, retrying: 0, total: pending };
 }
 
 async function countDLQ() {

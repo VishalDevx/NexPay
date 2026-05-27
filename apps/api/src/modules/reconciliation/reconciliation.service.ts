@@ -48,7 +48,7 @@ async function runPaymentLedgerReconciliation(runId: string) {
     }
     matchedIds.add(payment.id);
 
-    const netLedger = ledgerAmount.debit.minus(ledgerAmount.credit).abs();
+    const netLedger = ledgerAmount.abs();
     const diff = new Decimal(payment.amount.toString()).minus(netLedger).abs();
 
     if (diff.equals(0)) {
@@ -80,7 +80,7 @@ async function runPaymentLedgerReconciliation(runId: string) {
 
   for (const [paymentId, ledgerAmount] of ledgerByPayment.entries()) {
     if (matchedIds.has(paymentId)) continue;
-    const netLedger = ledgerAmount.debit.minus(ledgerAmount.credit).abs();
+    const netLedger = ledgerAmount.abs();
     matches.push({
       runId, matchType: "ORPHAN", sourceType: "LEDGER", sourceId: paymentId,
       targetType: "PAYMENT", expectedAmount: netLedger, actualAmount: new Decimal(0),

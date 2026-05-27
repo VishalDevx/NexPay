@@ -32,7 +32,7 @@ router.post("/auth/register", async (req: Request, res: Response) => {
         passwordHash,
         country: country || null,
         businessType: businessType || null,
-        status: "PENDING",
+        status: "DRAFT",
       },
     });
 

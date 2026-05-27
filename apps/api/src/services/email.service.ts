@@ -39,7 +39,7 @@ async function sendWithResend(options: EmailOptions): Promise<EmailResult> {
       throw new Error(`Resend API error: ${response.status} ${errorBody}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as { id?: string };
     return { success: true, messageId: data.id };
   } catch (err: any) {
     console.error(`[Email] Failed to send to ${options.to}:`, err.message);

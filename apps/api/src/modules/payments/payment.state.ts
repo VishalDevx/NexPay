@@ -22,11 +22,11 @@ export function getAllowedTransitions(status: PaymentStatus): PaymentStatus[] {
 }
 
 export function isTerminal(status: PaymentStatus): boolean {
-  return [PaymentStatus.FAILED, PaymentStatus.REFUNDED].includes(status);
+  return ([PaymentStatus.FAILED, PaymentStatus.REFUNDED] as PaymentStatus[]).includes(status);
 }
 
 export function isSuccess(status: PaymentStatus): boolean {
-  return [PaymentStatus.CAPTURED, PaymentStatus.SETTLED].includes(status);
+  return ([PaymentStatus.CAPTURED, PaymentStatus.SETTLED] as PaymentStatus[]).includes(status);
 }
 
 export { PaymentStatus };

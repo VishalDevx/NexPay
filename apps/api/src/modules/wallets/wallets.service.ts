@@ -69,7 +69,7 @@ export const walletService = {
         },
       });
 
-      await redis.decrbyfloat(wallet.redisBalanceKey, parsed.toFixed(4));
+      await redis.incrbyfloat(wallet.redisBalanceKey, `-${parsed.toFixed(4)}`);
 
       return txn;
     });

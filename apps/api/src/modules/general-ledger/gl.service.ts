@@ -241,7 +241,7 @@ export const glService = {
   },
 
   async getIncomeStatement(fromDate: Date, toDate: Date) {
-    const where = { entry: { status: JournalStatus.POSTED as const, entryDate: { gte: fromDate, lte: toDate } } };
+    const where = { entry: { status: JournalStatus.POSTED, entryDate: { gte: fromDate, lte: toDate } } };
     const revenueLines = await prisma.journalLine.findMany({
       where: { ...where, account: { type: "REVENUE" as any } },
       include: { account: true },

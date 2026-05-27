@@ -147,7 +147,7 @@ export default function ObservabilityPage() {
 
   const latencyHistogram = Object.entries(histograms)
     .filter(([k]) => k.startsWith("api_request_duration_ms"))[0];
-  const latencyData = latencyHistogram ? latencyHistogram[1] : { p50: 0, p95: 0, p99: 0, count: 0, sum: 0 };
+  const latencyData = (latencyHistogram ? latencyHistogram[1] : { p50: 0, p95: 0, p99: 0, count: 0, sum: 0 }) as { p50: number; p95: number; p99: number; count: number; sum: number };
 
   const requestRateData = [
     { name: "GET", value: Object.entries(counters).filter(([k]) => k.includes("method=GET")).reduce((s, [, v]) => s + (v as number), 0) },

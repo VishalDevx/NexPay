@@ -44,6 +44,7 @@ export const outboxService = {
     return events.map((e) => ({
       ...e,
       status: e.status as OutboxEvent["status"],
+      publishedAt: e.publishedAt ?? undefined,
     }));
   },
 
@@ -56,6 +57,7 @@ export const outboxService = {
     return events.map((e) => ({
       ...e,
       status: e.status as OutboxEvent["status"],
+      publishedAt: e.publishedAt ?? undefined,
     }));
   },
 

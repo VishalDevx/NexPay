@@ -337,7 +337,7 @@ export const paymentService = {
     const payment = await paymentRepo.findById(paymentId);
     if (!payment) throw new Error("Payment not found");
 
-    if (![PaymentStatus.INITIATED, PaymentStatus.PROCESSING].includes(payment.status)) {
+    if (!([PaymentStatus.INITIATED, PaymentStatus.PROCESSING] as PaymentStatus[]).includes(payment.status)) {
       throw new Error("Can only cancel payments in INITIATED or PROCESSING state");
     }
 
@@ -353,7 +353,7 @@ export const paymentService = {
     const payment = await paymentRepo.findById(paymentId);
     if (!payment) throw new Error("Payment not found");
 
-    if (![PaymentStatus.CAPTURED, PaymentStatus.SETTLED].includes(payment.status)) {
+    if (!([PaymentStatus.CAPTURED, PaymentStatus.SETTLED] as PaymentStatus[]).includes(payment.status)) {
       throw new Error("Can only refund captured or settled payments");
     }
 

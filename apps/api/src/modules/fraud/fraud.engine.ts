@@ -20,7 +20,7 @@ interface FraudRuleResult {
   reason: string;
 }
 
-interface FraudEvaluationResult {
+export interface FraudEvaluationResult {
   totalScore: number;
   triggeredRules: FraudRuleResult[];
   decision: "APPROVE" | "REVIEW" | "DECLINE";

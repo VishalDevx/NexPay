@@ -1,11 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { metrics } from "../modules/metrics/metrics";
-import { v4 as uuidv4 } from "uuid";
 
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction) {
-  if (!req.headers["x-request-id"]) {
-    req.headers["x-request-id"] = uuidv4();
-  }
 
   const start = Date.now();
   const chunks: Buffer[] = [];
@@ -46,7 +42,7 @@ export function metricsMiddleware(req: Request, res: Response, next: NextFunctio
         } catch {}
       }
       metrics.recordApiLog({
-        id: (req.headers["x-request-id"] as string) || uuidv4(),
+        id: req.requestId || "unknown",
         merchantId,
         method,
         path,

@@ -10,6 +10,7 @@ declare global {
       sandboxScenario?: { status: string; fraudScore: number };
       idempotencyKey?: string;
       idempotencyKeyHash?: string;
+      requestId?: string;
     }
   }
 }

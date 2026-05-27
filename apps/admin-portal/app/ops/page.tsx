@@ -7,7 +7,6 @@ import {
   ChevronRight, Plus, Send, UserCheck, Search, Clock, Globe,
   Server, Database, Ban, Save, ExternalLink, Eye, Monitor, Wrench,
 } from "lucide-react";
-import { useEffect, useState } from "react";
 
 type OpsTab = "support" | "kyc" | "reviews" | "activity" | "payouts" | "webhooks" | "incidents" | "reserve" | "status-components" | "outbox";
 
