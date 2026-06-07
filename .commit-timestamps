@@ -17,3 +17,4 @@
 # 2026-06-11T22:39:35.658152 - chore: add docker compose override
 # 2026-06-10T09:41:23.658152 - chore: update Dockerfile stages
 # 2026-06-08T05:54:05.658152 - chore: configure CI triggers
+# 2026-06-07T18:04:26.658152 - chore: add codeowners file
