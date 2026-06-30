@@ -1,0 +1,48 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "title": "NexPay Overview",
+  "uid": "nexpay-overview",
+  "panels": [
+    {
+      "title": "API Request Rate",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "rate(api_requests_total[5m])",
+          "legendFormat": "{{method}} {{path}}"
+        }
+      ]
+    },
+    {
+      "title": "API Latency P95",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "api_latency_p95",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "title": "Payment Success Rate",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(payment_success_total[1h])) / sum(rate(payment_success_total[1h]) + rate(payment_failure_total[1h])) * 100"
+        }
+      ]
+    },
+    {
+      "title": "Error Rate",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "error_rate"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}
