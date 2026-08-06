@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff, Loader2, Check } from "lucide-react";
+import { getPostLoginPath } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 
 const countries = [
@@ -125,7 +126,7 @@ export default function RegisterPage() {
       if (loginRes.ok) {
         localStorage.setItem("nexpay_token", loginData.token);
         localStorage.setItem("nexpay_merchant", JSON.stringify(loginData.merchant));
-        router.push("/dashboard");
+        router.push(getPostLoginPath(loginData.merchant?.kycStatus));
       }
     } catch (err: any) {
       setOtpError(err.message);

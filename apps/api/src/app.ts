@@ -34,6 +34,7 @@ import reconciliationRouter from "./modules/reconciliation/reconciliation.router
 import integrationsRouter from "./modules/integrations/integrations.router";
 import gatewayRouter from "./modules/gateway/gateway.router";
 import sandboxRouter from "./modules/sandbox/sandbox.router";
+import { paymentLinksRouter } from "./modules/payment-links/payment-links.router";
 import supportRouter from "./modules/support/support.router";
 import cannedResponsesRouter from "./modules/support/canned-responses.router";
 import reserveRouter from "./modules/reserve/reserve.router";
@@ -47,6 +48,7 @@ import glRouter from "./modules/general-ledger/gl.router";
 import billingAdminRouter from "./modules/billing/billing-admin.router";
 import statusRouter from "./modules/status/status.router";
 import openapiRouter from "./modules/openapi/openapi.router";
+import { paymentLinksPublicRouter } from "./modules/payment-links/payment-links.router";
 
 import { metricsMiddleware } from "./middleware/metrics";
 import { metrics } from "./modules/metrics/metrics";
@@ -83,6 +85,8 @@ export function createApp() {
   app.use("/api/v1/incidents", incidentsRouter);
 
   app.use("/api/v1/status", statusRouter);
+
+  app.use("/api/v1/payment-links", paymentLinksPublicRouter);
 
   app.use("/api/v1", openapiRouter);
 
@@ -125,6 +129,7 @@ export function createApp() {
   app.use("/api/v1/gateway", gatewayRouter);
   app.use("/api/v1/integrations", integrationsRouter);
   app.use("/api/v1/sandbox", sandboxRouter);
+  app.use("/api/v1/payment-links", paymentLinksRouter);
 
   app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
     logger.error({ err, requestId: req.requestId }, "Unhandled error");

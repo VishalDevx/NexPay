@@ -1,357 +1,237 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
+import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { StatCard } from "@/components/ui/stat-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   DollarSign, TrendingUp, AlertCircle, CheckCircle2, Activity,
-  Wallet, Globe, Bell, ArrowUpRight, ArrowDownRight, RefreshCw,
-  Banknote, Clock, ShieldAlert, Webhook, Ban, Users,
+  Wallet, Bell, Banknote, ShieldAlert, Webhook, RefreshCw,
 } from "lucide-react";
-import { api } from "@/lib/api";
+import {
+  useRevenue,
+  useRecentPayments,
+  useWalletBalances,
+  usePayouts,
+  useReserveConfig,
+  useDashboardAlerts,
+  useDashboardMetrics,
+} from "@/lib/hooks/use-dashboard";
+import { formatMoney, timeAgo } from "@/lib/format";
+import { useAuth } from "@/lib/auth-context";
+import type { RevenuePeriod } from "@/lib/types/api";
 
-const COLORS = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
-
-const mockAlerts = [
-  { type: "webhook", label: "Webhook endpoint failing", endpoint: "https://api.myapp.com/webhooks/nexpay", severity: "error" },
-  { type: "rate_limit", label: "IP rate-limited", detail: "203.0.113.42 (10 failed attempts)", severity: "warning" },
-  { type: "dispute", label: "Pending dispute", detail: "txn_008 - $199.00 - Reason: service_not_received", severity: "warning" },
-  { type: "reconciliation", label: "Reconciliation drift", detail: "USD wallet: $0.04 discrepancy auto-corrected", severity: "info" },
-];
-
-const mockFxRates = [
-  { pair: "USD/INR", rate: "83.45", change: "+0.23%" },
-  { pair: "EUR/USD", rate: "1.08", change: "-0.12%" },
-  { pair: "GBP/USD", rate: "1.27", change: "+0.08%" },
-];
+const CHART_COLORS = ["#18181b", "#71717a", "#a1a1aa", "#d4d4d8"];
 
 export default function DashboardPage() {
-  const [metrics, setMetrics] = useState<any>(null);
-  const [revenueData, setRevenueData] = useState<any[]>([]);
-  const [transactions, setTransactions] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [revenuePeriod, setRevenuePeriod] = useState<"daily" | "weekly" | "monthly">("daily");
-  const [sandboxMode, setSandboxMode] = useState(false);
+  const { merchant } = useAuth();
+  const currency = merchant?.baseCurrency || "USD";
+  const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>("daily");
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const [revRes, txnRes] = await Promise.all([
-          api.get<any>("/analytics/revenue?period=daily"),
-          api.get<any>("/payments?limit=6"),
-        ]);
-        const data = revRes.data || [];
-        setRevenueData(data.map((r: any) => ({ date: r.date, amount: Number(r.revenue) })));
-        setTransactions(txnRes.data || []);
-        if (data.length) {
-          const total = data.reduce((s: number, r: any) => s + Number(r.revenue), 0);
-          const count = data.reduce((s: number, r: any) => s + Number(r.count), 0);
-          setMetrics({
-            revenue: total,
-            successCount: count,
-            failureRate: "1.2%",
-            avgTicket: count > 0 ? total / count : 0,
-          });
-        } else {
-          setMetrics({ revenue: 0, successCount: 0, failureRate: "0%", avgTicket: 0 });
-        }
-      } catch (err) {
-        console.error("Dashboard fetch error:", err);
-        setMetrics({ revenue: 0, successCount: 0, failureRate: "0%", avgTicket: 0 });
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchData();
-  }, []);
+  const { data: revenueRes, isLoading: revenueLoading } = useRevenue(revenuePeriod);
+  const { data: paymentsRes, isLoading: paymentsLoading } = useRecentPayments(6);
+  const { data: metricsPaymentsRes } = useRecentPayments(100);
+  const { data: walletRes, isLoading: walletLoading } = useWalletBalances();
+  const { data: payoutsRes, isLoading: payoutsLoading } = usePayouts();
+  const { data: reserveRes, isLoading: reserveLoading } = useReserveConfig();
+  const { alerts, isLoading: alertsLoading } = useDashboardAlerts();
 
-  const currencyData = transactions.reduce((acc: any, p: any) => {
-    const curr = p.currency || "USD";
-    acc[curr] = (acc[curr] || 0) + Number(p.amount);
-    return acc;
-  }, {});
-  const currencyChart = Object.entries(currencyData).map(([name, value]) => ({ name, value }));
+  const revenueData = useMemo(
+    () => (revenueRes?.data ?? []).map((r) => ({ date: r.date, amount: Number(r.revenue) })),
+    [revenueRes]
+  );
+
+  const transactions = paymentsRes?.data ?? [];
+  const metrics = useDashboardMetrics(revenueRes?.data, metricsPaymentsRes?.data);
+  const walletBalances = walletRes?.data ?? [];
+  const primaryWallet = walletBalances.find((w) => w.currency === currency) ?? walletBalances[0];
+  const pendingPayouts = (payoutsRes?.data ?? [])
+    .filter((p) => p.status === "PENDING" || p.status === "PROCESSING")
+    .reduce((s, p) => s + Number(p.amount), 0);
+  const reserveBalance = Number(reserveRes?.currentReserveBalance ?? 0);
+  const loading = revenueLoading || paymentsLoading;
+
+  const currencyChartData = useMemo(() => {
+    const map = transactions.reduce((acc: Record<string, number>, p) => {
+      const curr = p.currency || currency;
+      acc[curr] = (acc[curr] || 0) + Number(p.amount);
+      return acc;
+    }, {});
+    return Object.entries(map).map(([name, value]) => ({ name, value }));
+  }, [transactions, currency]);
 
   return (
-    <div className="space-y-6">
-      {sandboxMode && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
-            <span className="text-sm font-medium text-amber-800">Sandbox mode — test data only</span>
-          </div>
-          <Button size="sm" variant="outline" className="border-amber-300 text-amber-700" onClick={() => {
-            if (confirm("Switch to live mode? All data and keys will switch context.")) setSandboxMode(false);
-          }}>
-            Switch to Live
-          </Button>
-        </div>
-      )}
+    <div>
+      <PageHeader
+        title="Home"
+        description={`Welcome back${merchant?.name ? `, ${merchant.name}` : ""}`}
+      />
 
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Dashboard</h1>
-          <p className="text-sm text-gray-500 mt-1">Real-time overview of your payment activity</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button
-            variant={sandboxMode ? "default" : "outline"}
-            size="sm"
-            onClick={() => setSandboxMode(!sandboxMode)}
-            className={sandboxMode ? "bg-amber-600 hover:bg-amber-500 text-white" : ""}
-          >
-            <RefreshCw className="w-4 h-4 mr-1" />
-            {sandboxMode ? "Sandbox" : "Live"}
-          </Button>
-        </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Revenue" value={formatMoney(metrics.revenue, currency)} icon={DollarSign} loading={loading} />
+        <StatCard label="Transactions" value={String(metrics.successCount)} icon={CheckCircle2} loading={loading} />
+        <StatCard label="Failure rate" value={metrics.failureRate} icon={AlertCircle} loading={loading} />
+        <StatCard label="Avg. ticket" value={formatMoney(metrics.avgTicket, currency)} icon={TrendingUp} loading={loading} />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-500">Total Revenue</p>
-                {loading ? <Skeleton className="h-8 w-24 mt-1" /> : <p className="text-2xl font-bold mt-1">${(metrics?.revenue ?? 0).toFixed(2)}</p>}
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center">
-                <DollarSign size={24} className="text-blue-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-500">Successful Txns</p>
-                {loading ? <Skeleton className="h-8 w-16 mt-1" /> : <p className="text-2xl font-bold mt-1 text-emerald-600">{metrics?.successCount ?? 0}</p>}
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center">
-                <CheckCircle2 size={24} className="text-emerald-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-500">Failure Rate</p>
-                {loading ? <Skeleton className="h-8 w-16 mt-1" /> : <p className="text-2xl font-bold mt-1 text-red-600">{metrics?.failureRate ?? "0%"}</p>}
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
-                <AlertCircle size={24} className="text-red-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-500">Avg. Ticket Size</p>
-                {loading ? <Skeleton className="h-8 w-24 mt-1" /> : <p className="text-2xl font-bold mt-1 text-violet-600">${(metrics?.avgTicket ?? 0).toFixed(2)}</p>}
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-violet-50 flex items-center justify-center">
-                <TrendingUp size={24} className="text-violet-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Revenue</CardTitle>
-              <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
-                {(["daily", "weekly", "monthly"] as const).map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setRevenuePeriod(p)}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition ${
-                      revenuePeriod === p ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"
-                    }`}
-                  >
-                    {p.charAt(0).toUpperCase() + p.slice(1)}
-                  </button>
-                ))}
-              </div>
+          <CardHeader className="flex-row items-center justify-between space-y-0 pb-4">
+            <CardTitle>Revenue</CardTitle>
+            <div className="flex rounded-md border p-0.5">
+              {(["daily", "weekly", "monthly"] as const).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setRevenuePeriod(p)}
+                  className={`rounded px-2.5 py-1 text-[11px] font-medium capitalize transition-colors ${
+                    revenuePeriod === p ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {p}
+                </button>
+              ))}
             </div>
           </CardHeader>
-          <CardContent>
-            {loading ? (
-              <Skeleton className="h-[300px] w-full" />
+          <CardContent className="pt-0">
+            {revenueLoading ? (
+              <Skeleton className="h-[260px] w-full" />
             ) : revenueData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={300}>
+              <ResponsiveContainer width="100%" height={260}>
                 <LineChart data={revenueData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="amount" stroke="#2563eb" strokeWidth={2} dot={{ fill: "#2563eb" }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={48} />
+                  <Tooltip
+                    contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid hsl(var(--border))" }}
+                    formatter={(v: number) => formatMoney(v, currency)}
+                  />
+                  <Line type="monotone" dataKey="amount" stroke="hsl(var(--foreground))" strokeWidth={1.5} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-[300px] flex items-center justify-center text-gray-400">No transaction data yet</div>
+              <div className="flex h-[260px] items-center justify-center text-[13px] text-muted-foreground">
+                No revenue data yet
+              </div>
             )}
           </CardContent>
         </Card>
 
-        <div className="space-y-6">
-          <Card>
-            <CardHeader><CardTitle>Currency Split</CardTitle></CardHeader>
-            <CardContent>
-              {currencyChart.length > 0 ? (
-                <div className="flex flex-col items-center">
-                  <ResponsiveContainer width="100%" height={160}>
-                    <PieChart>
-                      <Pie data={currencyChart} cx="50%" cy="50%" innerRadius={45} outerRadius={70} dataKey="value">
-                        {currencyChart.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                      </Pie>
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="flex flex-wrap gap-3 mt-2">
-                    {currencyChart.map((c, i) => (
-                      <div key={c.name} className="flex items-center gap-1.5 text-xs">
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                        <span className="font-medium">{c.name}</span>
-                        <span className="text-gray-500">${Number(c.value).toFixed(0)}</span>
-                      </div>
-                    ))}
+        <Card>
+          <CardHeader><CardTitle>Wallet</CardTitle></CardHeader>
+          <CardContent className="space-y-4 pt-0">
+            {walletLoading || payoutsLoading || reserveLoading ? (
+              <Skeleton className="h-28 w-full" />
+            ) : (
+              <>
+                <div>
+                  <p className="text-2xl font-semibold tabular-nums tracking-tight">
+                    {formatMoney(primaryWallet?.balance ?? 0, primaryWallet?.currency ?? currency)}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Available balance</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[12px]">
+                  <div className="rounded-md bg-muted/50 p-2.5">
+                    <p className="text-muted-foreground">Pending</p>
+                    <p className="font-medium tabular-nums">{formatMoney(pendingPayouts, currency)}</p>
+                  </div>
+                  <div className="rounded-md bg-muted/50 p-2.5">
+                    <p className="text-muted-foreground">Reserve</p>
+                    <p className="font-medium tabular-nums">{formatMoney(reserveBalance, currency)}</p>
                   </div>
                 </div>
-              ) : (
-                <div className="h-[160px] flex items-center justify-center text-gray-400 text-sm">No data</div>
-              )}
-            </CardContent>
-          </Card>
+                <Button variant="outline" className="w-full" asChild>
+                  <Link href="/payouts"><Banknote className="h-3.5 w-3.5" /> Schedule payout</Link>
+                </Button>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
-          <Card>
-            <CardHeader><CardTitle>FX Rates</CardTitle></CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {mockFxRates.map((fx) => (
-                  <div key={fx.pair} className="flex items-center justify-between text-sm">
-                    <span className="font-medium">{fx.pair}</span>
-                    <div className="flex items-center gap-2">
-                      <span>{fx.rate}</span>
-                      <span className={`text-xs ${fx.change.startsWith("+") ? "text-emerald-600" : "text-red-600"}`}>
-                        {fx.change}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader className="flex-row items-center justify-between pb-3">
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-3.5 w-3.5 text-muted-foreground" /> Recent
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0 pt-0">
+            {paymentsLoading ? (
+              <div className="space-y-2 p-5">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-10" />)}</div>
+            ) : transactions.length > 0 ? (
+              <div className="divide-y">
+                {transactions.map((txn) => (
+                  <div key={txn.id} className="flex items-center justify-between px-5 py-3 text-[13px] hover:bg-muted/30">
+                    <div className="min-w-0">
+                      <p className="font-medium tabular-nums">{formatMoney(Number(txn.amount), txn.currency)}</p>
+                      <p className="truncate text-[11px] text-muted-foreground">
+                        {txn.customer?.email || txn.id.slice(0, 14)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Badge variant="neutral" className="text-[10px] font-normal">{txn.status}</Badge>
+                      <span className="text-[11px] text-muted-foreground tabular-nums">
+                        {txn.createdAt ? timeAgo(txn.createdAt) : ""}
                       </span>
                     </div>
                   </div>
                 ))}
               </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-2">
-                <Activity className="w-4 h-4" /> Live Transactions
-              </CardTitle>
-              <Badge variant="success" className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Live
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="divide-y">
-              {transactions.map((txn) => (
-                <div key={txn.id} className="flex items-center justify-between px-6 py-3 hover:bg-gray-50">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div>
-                      <p className="text-sm font-medium">${Number(txn.amount).toFixed(2)} {txn.currency}</p>
-                      <p className="text-xs text-gray-500 truncate">{txn.customer?.email || txn.customer?.name || ""}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Badge variant={txn.status as any}>{txn.status}</Badge>
-                    <span className="text-xs text-gray-400 w-16 text-right">
-                      {txn.createdAt ? (() => {
-                        const diff = Date.now() - new Date(txn.createdAt).getTime();
-                        const mins = Math.floor(diff / 60000);
-                        if (mins < 1) return "Just now";
-                        if (mins < 60) return `${mins} min ago`;
-                        const hrs = Math.floor(mins / 60);
-                        return `${hrs}h ago`;
-                      })() : ""}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
+            ) : (
+              <p className="p-8 text-center text-[13px] text-muted-foreground">No transactions</p>
+            )}
           </CardContent>
         </Card>
 
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Wallet className="w-4 h-4" /> Wallet Balance
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div>
-                  <p className="text-3xl font-bold">$12,430.50</p>
-                  <p className="text-sm text-gray-500">USD Balance</p>
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-gray-500">Pending Settlement</p>
-                    <p className="font-semibold">$3,240.00</p>
-                  </div>
-                  <div className="bg-amber-50 rounded-lg p-3">
-                    <p className="text-amber-600">Frozen (Disputed)</p>
-                    <p className="font-semibold text-amber-700">$199.00</p>
-                  </div>
-                </div>
-                <Link href="/payouts">
-                  <Button className="w-full bg-blue-600 hover:bg-blue-500 text-white">
-                    <Banknote className="w-4 h-4 mr-1" /> Schedule Payout
-                  </Button>
-                </Link>
-              </div>
-            </CardContent>
-          </Card>
+        <div className="space-y-4">
+          {currencyChartData.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle>Currencies</CardTitle></CardHeader>
+              <CardContent className="pt-0">
+                <ResponsiveContainer width="100%" height={100}>
+                  <PieChart>
+                    <Pie data={currencyChartData} cx="50%" cy="50%" innerRadius={28} outerRadius={44} dataKey="value" strokeWidth={0}>
+                      {currencyChartData.map((_, i) => (
+                        <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Bell className="w-4 h-4" /> Alerts
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="divide-y">
-                {mockAlerts.map((alert, i) => (
-                  <div key={i} className="px-6 py-3 flex items-start gap-3">
-                    {alert.type === "webhook" && <Webhook className="w-4 h-4 text-red-500 mt-0.5" />}
-                    {alert.type === "rate_limit" && <Ban className="w-4 h-4 text-amber-500 mt-0.5" />}
-                    {alert.type === "dispute" && <ShieldAlert className="w-4 h-4 text-amber-500 mt-0.5" />}
-                    {alert.type === "reconciliation" && <RefreshCw className="w-4 h-4 text-blue-500 mt-0.5" />}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{alert.label}</p>
-                      <p className="text-xs text-gray-500 truncate">{"endpoint" in alert ? alert.endpoint : alert.detail}</p>
+            <CardHeader><CardTitle className="flex items-center gap-2"><Bell className="h-3.5 w-3.5 text-muted-foreground" /> Alerts</CardTitle></CardHeader>
+            <CardContent className="p-0 pt-0">
+              {alertsLoading ? (
+                <div className="space-y-2 p-5">{[1, 2].map((i) => <Skeleton key={i} className="h-8" />)}</div>
+              ) : alerts.length > 0 ? (
+                <div className="divide-y">
+                  {alerts.map((alert) => (
+                    <div key={alert.id} className="flex gap-2.5 px-5 py-3 text-[13px]">
+                      {alert.type === "webhook" && <Webhook className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                      {alert.type === "dispute" && <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                      {alert.type === "reconciliation" && <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                      <div className="min-w-0">
+                        <p className="font-medium">{alert.label}</p>
+                        <p className="truncate text-[11px] text-muted-foreground">{alert.detail}</p>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="p-6 text-center text-[13px] text-muted-foreground">All clear</p>
+              )}
             </CardContent>
           </Card>
         </div>

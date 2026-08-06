@@ -26,6 +26,7 @@ export default function TransactionsPage() {
   const [currencyFilter, setCurrencyFilter] = useState("ALL");
   const [selectedPayment, setSelectedPayment] = useState<any>(null);
   const [showDrawer, setShowDrawer] = useState(false);
+  const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
   const [refundAmount, setRefundAmount] = useState("");
   const [refundReason, setRefundReason] = useState("");
   const [showRefundModal, setShowRefundModal] = useState(false);
@@ -38,7 +39,7 @@ export default function TransactionsPage() {
         if (statusFilter !== "ALL") params.set("status", statusFilter);
         if (currencyFilter !== "ALL") params.set("currency", currencyFilter);
         if (search) params.set("search", search);
-        const res = await api.get<any>("/payments?" + params.toString());
+        const res = await api.get<any>("/payments/charges?" + params.toString());
         setPayments(res.data || []);
       } catch (err) {
         console.error("Failed to fetch payments:", err);
@@ -54,8 +55,14 @@ export default function TransactionsPage() {
     setShowDrawer(true);
     setDetailLoading(true);
     try {
-      const res = await api.get<any>("/payments/" + payment.id);
-      setSelectedPayment(res.data);
+      const res = await api.get<any>("/payments/charges/" + payment.id);
+      setSelectedPayment(res);
+      try {
+        const ledger = await api.get<any>("/payments/charges/" + payment.id + "/ledger");
+        setLedgerEntries(ledger.data || []);
+      } catch {
+        setLedgerEntries([]);
+      }
     } catch (err) {
       console.error("Failed to fetch payment detail:", err);
     } finally {
@@ -63,9 +70,12 @@ export default function TransactionsPage() {
     }
   };
 
+  const currencyFormatter = (value: number | string, currency: string) =>
+    Number(value).toLocaleString("en-US", { style: "currency", currency: currency || "USD" });
+
   const handleRefund = async () => {
     try {
-      await api.post<any>("/payments/" + selectedPayment.id + "/refund", { amount: parseFloat(refundAmount), reason: refundReason });
+      await api.post<any>("/payments/charges/" + selectedPayment.id + "/refund", { amount: parseFloat(refundAmount), reason: refundReason });
       setShowRefundModal(false);
       setRefundAmount("");
       setRefundReason("");
@@ -243,7 +253,7 @@ export default function TransactionsPage() {
                   <div className="grid grid-cols-2 gap-4">
                     {[
                       { label: "Payment ID", value: selectedPayment.id },
-                      { label: "Amount", value: `$${Number(selectedPayment.amount).toFixed(2)}` },
+                      { label: "Amount", value: currencyFormatter(selectedPayment.amount, selectedPayment.currency) },
                       { label: "Currency", value: selectedPayment.currency || "USD" },
                       { label: "Status", value: selectedPayment.status },
                       { label: "Fraud Score", value: selectedPayment.fraudScore ? `${Number(selectedPayment.fraudScore).toFixed(0)}/100` : "—" },
@@ -260,10 +270,23 @@ export default function TransactionsPage() {
 
                   <div>
                     <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-2">Ledger Entries</p>
-                    <div className="bg-gray-50 rounded-lg p-3 space-y-2">
-                      <div className="flex justify-between text-sm"><span className="text-emerald-600 font-medium">+ Credit</span><span>$249.00</span></div>
-                      <div className="flex justify-between text-sm"><span className="text-red-600 font-medium">- Debit</span><span>$249.00</span></div>
-                    </div>
+                    {ledgerEntries.length > 0 ? (
+                      <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                        {ledgerEntries.map((le: any) => (
+                          <div key={le.id} className="flex justify-between items-center text-sm">
+                            <div className="flex items-center gap-2">
+                              <span className={`font-medium ${le.type === "DEBIT" ? "text-red-600" : "text-emerald-600"}`}>
+                                {le.type === "DEBIT" ? "- Debit" : "+ Credit"}
+                              </span>
+                              <span className="text-gray-400">{le.description}</span>
+                            </div>
+                            <span className="font-medium">{currencyFormatter(le.amount, le.currency)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-400">No ledger entries recorded</div>
+                    )}
                   </div>
 
                   {selectedPayment.fraudEvents && selectedPayment.fraudEvents.length > 0 && (
@@ -308,7 +331,7 @@ export default function TransactionsPage() {
             <div className="space-y-4">
               <div>
                 <p className="text-sm text-gray-500">Amount</p>
-                <p className="font-medium">${Number(selectedPayment.amount).toFixed(2)} available for refund</p>
+                <p className="font-medium">{currencyFormatter(selectedPayment.amount, selectedPayment.currency)} available for refund</p>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Refund amount</label>

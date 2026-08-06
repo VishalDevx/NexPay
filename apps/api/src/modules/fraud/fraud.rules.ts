@@ -3,6 +3,30 @@ import { prisma } from "../../config/db";
 import Decimal from "decimal.js";
 import crypto from "crypto";
 
+async function redisIncr(key: string): Promise<number> {
+  try {
+    return await redis.incr(key);
+  } catch {
+    return 0;
+  }
+}
+
+async function redisSmembers(key: string): Promise<string[]> {
+  try {
+    return await redis.smembers(key);
+  } catch {
+    return [];
+  }
+}
+
+async function redisSadd(key: string, value: string): Promise<void> {
+  try {
+    await redis.sadd(key, value);
+  } catch {
+    // Redis unavailable — ignore
+  }
+}
+
 interface FraudRuleDefinition {
   id: string;
   name: string;
@@ -25,8 +49,14 @@ export const fraudRules: FraudRuleDefinition[] = [
     reason: "High transaction velocity",
     async evaluate(input) {
       const key = `fraud:velocity:${input.merchantId}:${Math.floor(Date.now() / VELOCITY_WINDOW_MS)}`;
-      const count = await redis.incr(key);
-      if (count === 1) await redis.expire(key, Math.ceil(VELOCITY_WINDOW_MS / 1000));
+      const count = await redisIncr(key);
+      if (count === 1) {
+        try {
+          await redis.expire(key, Math.ceil(VELOCITY_WINDOW_MS / 1000));
+        } catch {
+          // Redis unavailable — ignore
+        }
+      }
       return count > VELOCITY_LIMIT;
     },
   },
@@ -85,10 +115,10 @@ export const fraudRules: FraudRuleDefinition[] = [
       if (!deviceFingerprint) return false;
 
       const key = `fraud:devices:${input.merchantId}`;
-      const knownDevices = await redis.smembers(key);
+      const knownDevices = await redisSmembers(key);
 
       if (knownDevices.length === 0) {
-        await redis.sadd(key, deviceFingerprint);
+        await redisSadd(key, deviceFingerprint);
         return false;
       }
 

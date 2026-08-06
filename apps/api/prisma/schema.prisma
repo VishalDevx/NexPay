@@ -113,6 +113,13 @@ enum PaymentStatus {
   DISPUTED
 }
 
+enum PaymentLinkStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+  COMPLETED
+}
+
 enum AccountType {
   ASSET
   LIABILITY
@@ -231,6 +238,7 @@ model Merchant {
   supportTickets SupportTicket[]
   subscriptions  Subscription[]
   feeSchedules   FeeSchedule[]
+  paymentLinks   PaymentLink[]
 
   @@map("merchants")
 }
@@ -294,6 +302,7 @@ model Payment {
   metadata        Json?
   fraudScore      Decimal?      @db.Decimal(5, 2)
   description     String?
+  paymentLinkId   String?       @db.Uuid
   capturedAt      DateTime?
   settledAt       DateTime?
   createdAt       DateTime      @default(now())
@@ -301,6 +310,7 @@ model Payment {
 
   merchant      Merchant        @relation(fields: [merchantId], references: [id])
   customer      Customer?       @relation(fields: [customerId], references: [id])
+  paymentLink   PaymentLink?
   events        PaymentEvent[]
   ledgerEntries LedgerEntry[]
   fraudEvents   FraudEvent[]
@@ -315,6 +325,27 @@ model Payment {
   @@index([idempotencyKey])
   @@index([status])
   @@map("payments")
+}
+
+model PaymentLink {
+  id          String           @id @default(uuid()) @db.Uuid
+  merchantId  String           @db.Uuid
+  slug        String           @unique
+  amount      Decimal          @db.Decimal(20, 4)
+  currency    String           @default("INR")
+  description String?
+  status      PaymentLinkStatus @default(ACTIVE)
+  expiresAt   DateTime?
+  metadata    Json?
+  paymentId   String?          @unique @db.Uuid
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+  payment  Payment? @relation(fields: [paymentId], references: [id])
+
+  @@index([merchantId])
+  @@map("payment_links")
 }
 
 model PaymentEvent {

@@ -1,10 +1,34 @@
 import { Request, Response, NextFunction } from "express";
-import { redis } from "../config/redis";
+import { redis, isRedisConfigured } from "../config/redis";
 import { prisma } from "../config/db";
 import crypto from "crypto";
 
 const IDEMPOTENCY_TTL = 86400;
 const LOCK_TIMEOUT = 5000;
+
+async function redisGet(key: string): Promise<string | null> {
+  try {
+    return await redis.get(key);
+  } catch {
+    return null;
+  }
+}
+
+async function redisSet(key: string, value: string, ...args: any[]): Promise<unknown> {
+  try {
+    return await redis.set(key, value, ...args);
+  } catch {
+    return null;
+  }
+}
+
+async function redisDel(key: string): Promise<void> {
+  try {
+    await redis.del(key);
+  } catch {
+    // Redis unavailable — ignore
+  }
+}
 
 export async function idempotencyMiddleware(req: Request, res: Response, next: NextFunction) {
   if (!["POST", "PATCH"].includes(req.method)) return next();
@@ -18,7 +42,7 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
   const cacheKey = `idemp:${merchantId}:${key}`;
   const lockKey = `idemp:lock:${merchantId}:${key}`;
 
-  const cached = await redis.get(cacheKey);
+  const cached = await redisGet(cacheKey);
   if (cached) {
     return res.status(200).json(JSON.parse(cached));
   }
@@ -28,21 +52,23 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
   });
 
   if (existingKey && existingKey.expiresAt > new Date()) {
-    await redis.set(cacheKey, JSON.stringify(existingKey.response), "EX", IDEMPOTENCY_TTL);
+    await redisSet(cacheKey, JSON.stringify(existingKey.response), "EX", IDEMPOTENCY_TTL);
     return res.status(200).json(existingKey.response);
   }
 
-  const lockAcquired = await redis.set(lockKey, "1", "PX", LOCK_TIMEOUT, "NX");
-  if (!lockAcquired) {
+  const lockAcquired = await redisSet(lockKey, "1", "PX", LOCK_TIMEOUT, "NX");
+  // Lock not acquired: a concurrent request holds it — but only when Redis is
+  // actually reachable. On serverless without Redis, fail open and proceed.
+  if (lockAcquired !== "OK" && isRedisConfigured()) {
     return res.status(409).json({
       error: "conflict",
       message: "Request with this idempotency key is already being processed",
     });
   }
 
-  const doubleCheck = await redis.get(cacheKey);
+  const doubleCheck = await redisGet(cacheKey);
   if (doubleCheck) {
-    await redis.del(lockKey);
+    await redisDel(lockKey);
     return res.status(200).json(JSON.parse(doubleCheck));
   }
 
@@ -69,12 +95,10 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
         if (err.code !== "P2002") console.error("Idempotency save failed:", err);
       });
 
-      redis
-        .set(cacheKey, JSON.stringify(body), "EX", IDEMPOTENCY_TTL)
-        .catch(() => {});
+      redisSet(cacheKey, JSON.stringify(body), "EX", IDEMPOTENCY_TTL).catch(() => {});
     }
 
-    redis.del(lockKey).catch(() => {});
+    redisDel(lockKey);
 
     return originalJson(body);
   };
